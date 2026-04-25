@@ -13,7 +13,7 @@ const currentMsgIndex = ref(0)
 
 const loadingMessages = [
   '正在唤醒 AI 画师...',
-  '像素宇宙构建中，请耐心等待...',
+  '像素世界构建中，请耐心等待...',
   '正在为作品添加最后的细节...',
 ]
 
@@ -23,16 +23,12 @@ let msgTimer: ReturnType<typeof setInterval> | null = null
 const startLoading = () => {
   progress.value = 0
   currentMsgIndex.value = 0
-
-  // 假进度条：每秒推进，越接近 88% 越慢
   progressTimer = setInterval(() => {
     if (progress.value < 88) {
-      const increment = Math.max(0.4, (88 - progress.value) / 25)
-      progress.value = Math.min(88, progress.value + increment)
+      const inc = Math.max(0.4, (88 - progress.value) / 25)
+      progress.value = Math.min(88, progress.value + inc)
     }
   }, 1000)
-
-  // 提示语每 4 秒切换一次
   msgTimer = setInterval(() => {
     currentMsgIndex.value = (currentMsgIndex.value + 1) % loadingMessages.length
   }, 4000)
@@ -51,12 +47,10 @@ const stopLoading = async (success: boolean) => {
 
 const generate = async () => {
   if (!prompt.value.trim() || isLoading.value) return
-
   errorMsg.value = ''
   imageUrl.value = ''
   isLoading.value = true
   startLoading()
-
   try {
     const res = await fetch('/api/generate-image', {
       method: 'POST',
@@ -67,9 +61,7 @@ const generate = async () => {
       },
       body: JSON.stringify({ prompt: prompt.value.trim() }),
     })
-
     const data = await res.json()
-
     if (data.imageBase64) {
       imageUrl.value = `data:image/png;base64,${data.imageBase64}`
       await stopLoading(true)
@@ -86,14 +78,11 @@ const generate = async () => {
 const downloadImage = () => {
   const a = document.createElement('a')
   a.href = imageUrl.value
-  a.download = `deepin6677-${Date.now()}.png`
+  a.download = `deepin-image-${Date.now()}.png`
   a.click()
 }
 
-const reset = () => {
-  imageUrl.value = ''
-  errorMsg.value = ''
-}
+const reset = () => { imageUrl.value = ''; errorMsg.value = '' }
 
 onUnmounted(() => {
   if (progressTimer) clearInterval(progressTimer)
@@ -103,14 +92,17 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
-    <!-- 顶部 Header -->
+    <!-- Header -->
     <header class="header">
       <div class="brand">
-        <div class="logo">D</div>
-        <span class="brand-name">Deepin6677</span>
-        <span class="brand-tag">AI 图像生成</span>
+        <svg class="logo-svg" viewBox="0 0 36 36" fill="none">
+          <rect width="36" height="36" rx="9" fill="#2A1A0C"/>
+          <text x="8" y="26" font-size="20" font-weight="700" fill="#EAD9C0" font-family="serif">D</text>
+          <rect x="8" y="28" width="20" height="1.5" rx="1" fill="#C4813A" opacity="0.7"/>
+        </svg>
+        <span class="brand-name">Deepin Image</span>
       </div>
-      <button class="btn-settings" @click="emit('settings')" title="设置 API Key">
+      <button class="btn-icon" @click="emit('settings')" title="API Key 设置">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -118,70 +110,77 @@ onUnmounted(() => {
       </button>
     </header>
 
-    <!-- 主内容 -->
+    <!-- Main -->
     <main class="main">
-      <!-- 生成结果 -->
-      <div v-if="imageUrl" class="result-area">
-        <img :src="imageUrl" alt="AI 生成图片" class="result-image" />
-        <div class="result-actions">
-          <button class="btn-download" @click="downloadImage">下载图片</button>
-          <button class="btn-retry" @click="reset">重新生成</button>
+
+      <!-- 结果展示 -->
+      <div v-if="imageUrl" class="result">
+        <img :src="imageUrl" alt="生成图片" class="result-img" />
+        <div class="result-bar">
+          <button class="btn-dl" @click="downloadImage">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path d="M10 14l-5-5h3V4h4v5h3l-5 5z"/>
+              <rect x="3" y="16" width="14" height="2" rx="1"/>
+            </svg>
+            下载图片
+          </button>
+          <button class="btn-ghost" @click="reset">重新生成</button>
         </div>
       </div>
 
-      <!-- 输入区（无图片时展示）-->
+      <!-- 输入区 -->
       <template v-else>
         <div class="hero">
-          <h2 class="hero-title">描述你的想象，<br/>AI 帮你画出来</h2>
-          <p class="hero-sub">基于 gpt-image-2 · 写一段描述，生成高质量图像</p>
+          <p class="eyebrow">Powered by gpt-image-2</p>
+          <h2 class="title">描述你的想象<br/>AI 为你呈现</h2>
+          <p class="subtitle">写一段文字描述，几分钟内生成一张高质量图像</p>
         </div>
 
-        <div class="input-area">
+        <div class="input-wrap">
           <textarea
             v-model="prompt"
-            placeholder="例如：一位韩系风格的女孩站在霓虹灯街头，电影感，9:16 竖幅..."
             :disabled="isLoading"
-            @keydown.meta.enter="generate"
+            placeholder="例如：一位戴草帽的女孩坐在麦田边，金色夕阳光，胶片质感，16:9..."
             rows="4"
+            @keydown.meta.enter="generate"
           />
           <div class="input-footer">
-            <span class="hint">⌘ + Enter 发送</span>
-            <button class="btn-generate" :disabled="isLoading || !prompt.trim()" @click="generate">
+            <span class="shortcut">⌘ + Enter 发送</span>
+            <button class="btn-gen" :disabled="isLoading || !prompt.trim()" @click="generate">
               生成图片
             </button>
           </div>
         </div>
 
-        <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
+        <p v-if="errorMsg" class="err">{{ errorMsg }}</p>
       </template>
     </main>
 
     <!-- 加载遮罩 -->
     <Transition name="fade">
-      <div v-if="isLoading" class="loading-overlay">
-        <div class="loading-card">
-          <!-- 旋转光环 -->
-          <div class="spinner-wrap">
-            <div class="spinner" />
-            <div class="spinner-inner" />
+      <div v-if="isLoading" class="overlay">
+        <div class="loader-box">
+          <!-- 旋转圆环 -->
+          <div class="rings">
+            <div class="ring-outer" />
+            <div class="ring-inner" />
+            <div class="ring-dot" />
           </div>
 
-          <!-- 切换文字 -->
-          <Transition name="slide-msg" mode="out-in">
-            <p :key="currentMsgIndex" class="loading-msg">
-              {{ loadingMessages[currentMsgIndex] }}
-            </p>
+          <!-- 提示语切换 -->
+          <Transition name="txt" mode="out-in">
+            <p :key="currentMsgIndex" class="loader-msg">{{ loadingMessages[currentMsgIndex] }}</p>
           </Transition>
 
-          <!-- 假进度条 -->
-          <div class="progress-wrap">
-            <div class="progress-bar">
-              <div class="progress-fill" :style="{ width: progress + '%' }" />
+          <!-- 进度条 -->
+          <div class="prog-row">
+            <div class="prog-track">
+              <div class="prog-fill" :style="{ width: progress + '%' }" />
             </div>
-            <span class="progress-text">{{ Math.floor(progress) }}%</span>
+            <span class="prog-pct">{{ Math.floor(progress) }}%</span>
           </div>
 
-          <p class="loading-tip">图片生成通常需要 1~3 分钟，请耐心等待</p>
+          <p class="loader-tip">图片生成通常需要 1 ~ 3 分钟</p>
         </div>
       </div>
     </Transition>
@@ -193,106 +192,86 @@ onUnmounted(() => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(ellipse at top, #1a1035 0%, #0d0d1a 70%);
+  background: radial-gradient(ellipse at 50% 0%, #221508 0%, #120E09 65%);
 }
 
-/* Header */
+/* ── Header ── */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 28px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo-svg { width: 32px; height: 32px; }
+.brand-name { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
 
-.logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  font-weight: 800;
-  color: white;
-}
-
-.brand-name {
-  font-size: 16px;
-  font-weight: 700;
-  color: #f0f0ff;
-}
-
-.brand-tag {
-  font-size: 12px;
-  color: #4b5563;
-  background: rgba(255,255,255,0.05);
-  padding: 3px 8px;
-  border-radius: 20px;
-}
-
-.btn-settings {
+.btn-icon {
   background: transparent;
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px;
+  padding: 7px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-2);
   transition: color 0.2s, border-color 0.2s;
   display: flex;
 }
-.btn-settings:hover { color: #e2e8f0; border-color: rgba(255,255,255,0.2); }
-.btn-settings svg { width: 18px; height: 18px; }
+.btn-icon:hover { color: var(--text); border-color: rgba(196,129,58,0.4); }
+.btn-icon svg { width: 17px; height: 17px; }
 
-/* Main */
+/* ── Main ── */
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 24px;
-  gap: 32px;
+  padding: 48px 24px;
+  gap: 36px;
 }
 
-/* Hero */
+/* ── Hero ── */
 .hero { text-align: center; }
-.hero-title {
-  font-size: 32px;
-  font-weight: 700;
-  line-height: 1.3;
-  background: linear-gradient(135deg, #c4b5fd, #818cf8, #a78bfa);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin-bottom: 12px;
+.eyebrow {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  padding: 4px 12px;
+  border: 1px solid rgba(196,129,58,0.25);
+  border-radius: 99px;
 }
-.hero-sub { font-size: 14px; color: #4b5563; }
+.title {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text);
+  margin-bottom: 12px;
+  letter-spacing: -0.5px;
+}
+.subtitle { font-size: 14px; color: var(--text-2); }
 
-/* Input */
-.input-area {
+/* ── Input ── */
+.input-wrap {
   width: 100%;
-  max-width: 680px;
-  background: #16162a;
-  border: 1px solid rgba(102, 126, 234, 0.2);
+  max-width: 660px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 16px;
   overflow: hidden;
   transition: border-color 0.2s;
 }
-.input-area:focus-within { border-color: rgba(102, 126, 234, 0.5); }
+.input-wrap:focus-within { border-color: rgba(196,129,58,0.45); }
 
 textarea {
   width: 100%;
   background: transparent;
   border: none;
-  color: #e2e8f0;
+  color: var(--text);
   font-size: 15px;
   line-height: 1.7;
   padding: 20px;
@@ -300,184 +279,170 @@ textarea {
   outline: none;
   font-family: inherit;
 }
-textarea::placeholder { color: #374151; }
-textarea:disabled { opacity: 0.5; }
+textarea::placeholder { color: var(--text-3); }
+textarea:disabled { opacity: 0.45; }
 
 .input-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-top: 1px solid rgba(255,255,255,0.05);
+  border-top: 1px solid var(--border);
 }
+.shortcut { font-size: 12px; color: var(--text-3); }
 
-.hint { font-size: 12px; color: #374151; }
-
-.btn-generate {
-  padding: 10px 24px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+.btn-gen {
+  padding: 9px 22px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dk));
   border: none;
-  border-radius: 10px;
-  color: white;
+  border-radius: 9px;
+  color: #FFF8F0;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.2s, transform 0.1s;
+  box-shadow: 0 3px 12px rgba(196,129,58,0.28);
 }
-.btn-generate:hover:not(:disabled) { opacity: 0.9; }
-.btn-generate:active:not(:disabled) { transform: scale(0.97); }
-.btn-generate:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-gen:hover:not(:disabled) { opacity: 0.88; }
+.btn-gen:active:not(:disabled) { transform: scale(0.97); }
+.btn-gen:disabled { opacity: 0.3; cursor: not-allowed; }
 
-.error-msg {
-  color: #f87171;
-  font-size: 14px;
-  text-align: center;
-}
+.err { font-size: 13px; color: #E07050; }
 
-/* Result */
-.result-area {
+/* ── Result ── */
+.result {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
   width: 100%;
-  max-width: 600px;
+  max-width: 580px;
 }
-
-.result-image {
+.result-img {
   width: 100%;
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
-  animation: fadeUp 0.4s ease;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px var(--border);
+  animation: fadeUp 0.45s ease;
 }
-
-.result-actions {
+.result-bar { display: flex; gap: 12px; }
+.btn-dl {
   display: flex;
-  gap: 12px;
-}
-
-.btn-download {
-  padding: 11px 28px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  align-items: center;
+  gap: 7px;
+  padding: 10px 22px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dk));
   border: none;
-  border-radius: 10px;
-  color: white;
+  border-radius: 9px;
+  color: #FFF8F0;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.2s;
+  box-shadow: 0 3px 12px rgba(196,129,58,0.28);
 }
-.btn-download:hover { opacity: 0.9; }
-
-.btn-retry {
-  padding: 11px 28px;
+.btn-dl:hover { opacity: 0.88; }
+.btn-ghost {
+  padding: 10px 22px;
   background: transparent;
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 10px;
-  color: #9ca3af;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-2);
   font-size: 14px;
-  font-weight: 500;
   cursor: pointer;
   transition: border-color 0.2s, color 0.2s;
 }
-.btn-retry:hover { border-color: rgba(255,255,255,0.3); color: #e2e8f0; }
+.btn-ghost:hover { border-color: rgba(196,129,58,0.4); color: var(--text); }
 
-/* Loading Overlay */
-.loading-overlay {
+/* ── Loading Overlay ── */
+.overlay {
   position: fixed;
   inset: 0;
-  background: rgba(13, 13, 26, 0.92);
-  backdrop-filter: blur(8px);
+  background: rgba(18, 14, 9, 0.9);
+  backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
 }
 
-.loading-card {
+.loader-box {
   text-align: center;
   padding: 48px 40px;
   width: 360px;
 }
 
-/* 双环旋转 */
-.spinner-wrap {
+/* 三层圆环 */
+.rings {
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 76px;
+  height: 76px;
   margin: 0 auto 32px;
 }
-
-.spinner {
+.ring-outer {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: #667eea;
-  border-right-color: #764ba2;
-  animation: spin 1.2s linear infinite;
+  border: 2.5px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent-lt);
+  animation: spin 1.4s linear infinite;
 }
-
-.spinner-inner {
+.ring-inner {
   position: absolute;
-  inset: 12px;
+  inset: 13px;
   border-radius: 50%;
   border: 2px solid transparent;
-  border-bottom-color: #a78bfa;
-  animation: spin 0.8s linear infinite reverse;
+  border-bottom-color: var(--accent-dk);
+  animation: spin 0.9s linear infinite reverse;
+}
+.ring-dot {
+  position: absolute;
+  inset: 29px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.6;
+  animation: pulse 1.4s ease-in-out infinite;
 }
 
-.loading-msg {
-  font-size: 16px;
-  color: #c4b5fd;
+.loader-msg {
+  font-size: 15px;
+  color: var(--text);
   font-weight: 500;
   margin-bottom: 28px;
-  min-height: 24px;
+  min-height: 22px;
 }
 
-.progress-wrap {
+.prog-row {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
 }
-
-.progress-bar {
+.prog-track {
   flex: 1;
-  height: 6px;
-  background: rgba(255,255,255,0.08);
-  border-radius: 999px;
+  height: 5px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 99px;
   overflow: hidden;
 }
-
-.progress-fill {
+.prog-fill {
   height: 100%;
-  background: linear-gradient(90deg, #667eea, #a78bfa);
-  border-radius: 999px;
-  transition: width 0.8s ease;
-  box-shadow: 0 0 8px rgba(102, 126, 234, 0.6);
+  background: linear-gradient(90deg, var(--accent-dk), var(--accent-lt));
+  border-radius: 99px;
+  transition: width 0.9s ease;
+  box-shadow: 0 0 8px rgba(196,129,58,0.5);
 }
+.prog-pct { font-size: 12px; color: var(--text-2); width: 34px; text-align: right; }
+.loader-tip { font-size: 12px; color: var(--text-3); }
 
-.progress-text {
-  font-size: 13px;
-  color: #6b7280;
-  width: 36px;
-  text-align: right;
-}
-
-.loading-tip {
-  font-size: 12px;
-  color: #374151;
-}
-
-/* Transitions */
+/* ── Transitions ── */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+.txt-enter-active, .txt-leave-active { transition: all 0.38s ease; }
+.txt-enter-from { opacity: 0; transform: translateY(8px); }
+.txt-leave-to { opacity: 0; transform: translateY(-8px); }
 
-.slide-msg-enter-active, .slide-msg-leave-active { transition: all 0.4s ease; }
-.slide-msg-enter-from { opacity: 0; transform: translateY(10px); }
-.slide-msg-leave-to { opacity: 0; transform: translateY(-10px); }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes pulse   { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+@keyframes fadeUp  { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 </style>
