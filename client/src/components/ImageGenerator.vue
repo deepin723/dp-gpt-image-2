@@ -52,7 +52,8 @@ const generate = async () => {
   isLoading.value = true
   startLoading()
   try {
-    const res = await fetch('/api/generate-image', {
+    const apiBase = import.meta.env.VITE_API_BASE || ''
+    const res = await fetch(`${apiBase}/api/generate-image`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
