@@ -52,7 +52,7 @@ const generate = async () => {
   isLoading.value = true
   startLoading()
   try {
-    const apiBase = import.meta.env.VITE_API_BASE || ''
+    const apiBase = import.meta.env.VITE_API_BASE || 'https://dp-gpt-image-2-production.up.railway.app'
     const res = await fetch(`${apiBase}/api/generate-image`, {
       method: 'POST',
       headers: {
