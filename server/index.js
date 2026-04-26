@@ -6,7 +6,7 @@ dotenv.config()
 
 const app = express()
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '10mb' }))
 
 /**
  * POST /api/generate-image
@@ -17,12 +17,20 @@ app.use(express.json())
 app.post('/api/generate-image', async (req, res) => {
   const apiKey = req.headers['x-api-key']
   const baseUrl = (req.headers['x-base-url'] || 'https://bobdong.cn/v1').replace(/\/$/, '')
-  const { prompt } = req.body
+  const { prompt, referenceImageBase64, referenceImageMime } = req.body
 
   if (!apiKey) return res.status(401).json({ error: '请先配置你的 API Key' })
   if (!prompt) return res.status(400).json({ error: '请输入描述文字' })
 
-  console.log(`[generate-image] baseUrl=${baseUrl} prompt=${prompt.slice(0, 60)}...`)
+  console.log(`[generate-image] baseUrl=${baseUrl} hasRefImage=${!!referenceImageBase64} prompt=${prompt.slice(0, 60)}...`)
+
+  // Build input content — with or without reference image
+  const inputContent = referenceImageBase64
+    ? [
+        { type: 'input_image', image_url: `data:${referenceImageMime || 'image/jpeg'};base64,${referenceImageBase64}` },
+        { type: 'input_text', text: prompt },
+      ]
+    : prompt
 
   try {
     const response = await fetch(`${baseUrl}/responses`, {
@@ -33,7 +41,7 @@ app.post('/api/generate-image', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'gpt-5.4',
-        input: [{ role: 'user', content: prompt }],
+        input: [{ role: 'user', content: inputContent }],
         tools: [{ type: 'image_generation' }],
         stream: true,
       }),
