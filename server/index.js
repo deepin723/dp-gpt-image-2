@@ -17,7 +17,7 @@ app.use(express.json({ limit: '10mb' }))
 app.post('/api/generate-image', async (req, res) => {
   const apiKey = req.headers['x-api-key']
   const baseUrl = (req.headers['x-base-url'] || 'https://bobdong.cn/v1').replace(/\/$/, '')
-  const { prompt, referenceImageBase64, referenceImageMime } = req.body
+  const { prompt, referenceImageBase64, referenceImageMime, size } = req.body
 
   if (!apiKey) return res.status(401).json({ error: '请先配置你的 API Key' })
   if (!prompt) return res.status(400).json({ error: '请输入描述文字' })
@@ -42,7 +42,7 @@ app.post('/api/generate-image', async (req, res) => {
       body: JSON.stringify({
         model: 'gpt-5.4',
         input: [{ role: 'user', content: inputContent }],
-        tools: [{ type: 'image_generation' }],
+        tools: [{ type: 'image_generation', size: size || '1024x1024' }],
         stream: true,
       }),
       signal: AbortSignal.timeout(600_000),
@@ -98,6 +98,51 @@ app.post('/api/generate-image', async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : '未知错误'
     console.error('[generate-image] error:', message)
+    res.status(500).json({ error: message })
+  }
+})
+
+/**
+ * POST /api/enhance-prompt
+ * 将用户的简短中文描述扩展为专业英文图像生成提示词
+ */
+app.post('/api/enhance-prompt', async (req, res) => {
+  const apiKey = req.headers['x-api-key']
+  const baseUrl = (req.headers['x-base-url'] || 'https://bobdong.cn/v1').replace(/\/$/, '')
+  const { prompt } = req.body
+
+  if (!apiKey) return res.status(401).json({ error: '请先配置你的 API Key' })
+  if (!prompt) return res.status(400).json({ error: '请输入描述文字' })
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert at writing AI image generation prompts. The user will provide a brief description in Chinese. Expand it into a detailed, professional English prompt. Include composition, lighting, style, mood, and color tone. Output only the prompt text with no explanations or prefix, under 200 words.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 300,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = await response.json()
+    const enhanced = data.choices?.[0]?.message?.content?.trim()
+    if (enhanced) {
+      res.json({ enhanced })
+    } else {
+      res.status(500).json({ error: '优化失败，请重试' })
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : '网络错误'
     res.status(500).json({ error: message })
   }
 })

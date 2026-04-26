@@ -11,23 +11,47 @@ interface HistoryItem {
   ts: number
 }
 
-const prompt = ref('')
-const isLoading = ref(false)
-const imageUrl = ref('')
+const SIZES = [
+  { label: '方形', desc: '1:1', value: '1024x1024' },
+  { label: '横版', desc: '3:2', value: '1536x1024' },
+  { label: '竖版', desc: '2:3', value: '1024x1536' },
+] as const
+
+const STYLES = ['电影感', '写实摄影', '水彩插画', '赛博朋克', '胶片质感', '动漫风格', '油画质感', '极简主义']
+
+const STYLE_EN: Record<string, string> = {
+  '电影感':   'cinematic lighting, film look',
+  '写实摄影': 'photorealistic, DSLR photography',
+  '水彩插画': 'watercolor illustration style',
+  '赛博朋克': 'cyberpunk aesthetic, neon lights',
+  '胶片质感': 'film grain, analog photography, vintage',
+  '动漫风格': 'anime style illustration',
+  '油画质感': 'oil painting texture, painterly',
+  '极简主义': 'minimalist design, clean composition',
+}
+
+// Core state
+const prompt         = ref('')
+const isLoading      = ref(false)
+const isEnhancing    = ref(false)
+const imageUrl       = ref('')
 const generatedPrompt = ref('')
-const errorMsg = ref('')
-const progress = ref(0)
+const errorMsg       = ref('')
+const progress       = ref(0)
 const currentMsgIndex = ref(0)
+const selectedSize   = ref('1024x1024')
+const activeStyles   = ref<string[]>([])
+const copiedImage    = ref(false)
 
 // History
 const showHistory = ref(false)
-const history = ref<HistoryItem[]>([])
+const history     = ref<HistoryItem[]>([])
 
-// Reference image upload
+// Reference image
 const refImagePreview = ref('')
-const refImageBase64 = ref('')
-const refImageMime = ref('')
-const fileInputRef = ref<HTMLInputElement | null>(null)
+const refImageBase64  = ref('')
+const refImageMime    = ref('')
+const fileInputRef    = ref<HTMLInputElement | null>(null)
 
 const loadingMessages = [
   '正在唤醒 AI 画师...',
@@ -63,6 +87,9 @@ const stopLoading = async (success: boolean) => {
   isLoading.value = false
 }
 
+const apiBase = () => import.meta.env.VITE_API_BASE || 'https://dp-gpt-image-2-production.up.railway.app'
+
+// ── Reference image ──────────────────────────────────────────
 const onFileChange = (e: Event) => {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
@@ -70,51 +97,80 @@ const onFileChange = (e: Event) => {
   reader.onload = (ev) => {
     const result = ev.target?.result as string
     refImagePreview.value = result
-    refImageBase64.value = result.split(',')[1]
-    refImageMime.value = result.match(/data:([^;]+);/)?.[1] || 'image/jpeg'
+    refImageBase64.value  = result.split(',')[1]
+    refImageMime.value    = result.match(/data:([^;]+);/)?.[1] || 'image/jpeg'
   }
   reader.readAsDataURL(file)
 }
 
 const clearRefImage = () => {
   refImagePreview.value = ''
-  refImageBase64.value = ''
-  refImageMime.value = ''
+  refImageBase64.value  = ''
+  refImageMime.value    = ''
   if (fileInputRef.value) fileInputRef.value.value = ''
 }
 
-const generate = async () => {
-  if (!prompt.value.trim() || isLoading.value) return
-  errorMsg.value = ''
-  imageUrl.value = ''
-  isLoading.value = true
-  startLoading()
+// ── Styles ───────────────────────────────────────────────────
+const toggleStyle = (style: string) => {
+  const idx = activeStyles.value.indexOf(style)
+  if (idx >= 0) activeStyles.value.splice(idx, 1)
+  else activeStyles.value.push(style)
+}
+
+const buildPrompt = () => {
+  const base = prompt.value.trim()
+  if (!activeStyles.value.length) return base
+  return `${base}, ${activeStyles.value.map(s => STYLE_EN[s]).join(', ')}`
+}
+
+// ── Enhance prompt ───────────────────────────────────────────
+const enhancePrompt = async () => {
+  if (!prompt.value.trim() || isEnhancing.value) return
+  isEnhancing.value = true
   try {
-    const apiBase = import.meta.env.VITE_API_BASE || 'https://dp-gpt-image-2-production.up.railway.app'
-    const body: Record<string, string> = { prompt: prompt.value.trim() }
-    if (refImageBase64.value) {
-      body.referenceImageBase64 = refImageBase64.value
-      body.referenceImageMime = refImageMime.value
-    }
-    const res = await fetch(`${apiBase}/api/generate-image`, {
+    const res = await fetch(`${apiBase()}/api/enhance-prompt`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': props.apiKey,
+        'x-api-key':  props.apiKey,
+        'x-base-url': props.baseUrl,
+      },
+      body: JSON.stringify({ prompt: prompt.value.trim() }),
+    })
+    const data = await res.json()
+    if (data.enhanced) prompt.value = data.enhanced
+  } catch { /* silent */ }
+  finally { isEnhancing.value = false }
+}
+
+// ── Generate ─────────────────────────────────────────────────
+const generate = async () => {
+  if (!prompt.value.trim() || isLoading.value) return
+  errorMsg.value  = ''
+  imageUrl.value  = ''
+  isLoading.value = true
+  startLoading()
+  const finalPrompt = buildPrompt()
+  try {
+    const body: Record<string, string> = { prompt: finalPrompt, size: selectedSize.value }
+    if (refImageBase64.value) {
+      body.referenceImageBase64 = refImageBase64.value
+      body.referenceImageMime   = refImageMime.value
+    }
+    const res = await fetch(`${apiBase()}/api/generate-image`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key':  props.apiKey,
         'x-base-url': props.baseUrl,
       },
       body: JSON.stringify(body),
     })
     const data = await res.json()
     if (data.imageBase64) {
-      imageUrl.value = `data:image/png;base64,${data.imageBase64}`
-      generatedPrompt.value = prompt.value.trim()
-      history.value.unshift({
-        id: Date.now().toString(),
-        prompt: prompt.value.trim(),
-        imageUrl: imageUrl.value,
-        ts: Date.now(),
-      })
+      imageUrl.value      = `data:image/png;base64,${data.imageBase64}`
+      generatedPrompt.value = finalPrompt
+      history.value.unshift({ id: Date.now().toString(), prompt: finalPrompt, imageUrl: imageUrl.value, ts: Date.now() })
       await stopLoading(true)
     } else {
       errorMsg.value = data.error || '生成失败，请重试'
@@ -126,19 +182,36 @@ const generate = async () => {
   }
 }
 
+// ── Result actions ───────────────────────────────────────────
 const downloadImage = () => {
   const a = document.createElement('a')
-  a.href = imageUrl.value
+  a.href     = imageUrl.value
   a.download = `deepin-image-${Date.now()}.png`
   a.click()
 }
 
-const reset = () => { imageUrl.value = ''; errorMsg.value = '' }
+const copyImage = async () => {
+  try {
+    const res  = await fetch(imageUrl.value)
+    const blob = await res.blob()
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+  } catch { /* browser may not support */ }
+  copiedImage.value = true
+  setTimeout(() => { copiedImage.value = false }, 2000)
+}
 
+// 修改描述 → 回到输入框，prompt 保留
+const editPrompt = () => { imageUrl.value = '' }
+
+// 重新生成 → 直接用当前 prompt 重新生成
+const regenerate = () => { imageUrl.value = ''; generate() }
+
+// ── History ──────────────────────────────────────────────────
 const loadHistory = (item: HistoryItem) => {
-  imageUrl.value = item.imageUrl
-  prompt.value = item.prompt
-  showHistory.value = false
+  imageUrl.value       = item.imageUrl
+  generatedPrompt.value = item.prompt
+  prompt.value         = item.prompt
+  showHistory.value    = false
 }
 
 onUnmounted(() => {
@@ -162,8 +235,7 @@ onUnmounted(() => {
       <div class="header-actions">
         <button class="btn-hist" :class="{ active: showHistory }" @click="showHistory = !showHistory">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14">
-            <circle cx="10" cy="10" r="8"/>
-            <polyline points="10,6 10,10 13,12"/>
+            <circle cx="10" cy="10" r="8"/><polyline points="10,6 10,10 13,12"/>
           </svg>
           历史{{ history.length ? ` (${history.length})` : '' }}
         </button>
@@ -200,13 +272,24 @@ onUnmounted(() => {
         </div>
         <div class="result-bar">
           <button class="btn-dl" @click="downloadImage">
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
               <path d="M10 14l-5-5h3V4h4v5h3l-5 5z"/>
               <rect x="3" y="16" width="14" height="2" rx="1"/>
             </svg>
             下载图片
           </button>
-          <button class="btn-ghost" @click="reset">重新生成</button>
+          <button class="btn-copy" :class="{ done: copiedImage }" @click="copyImage">
+            <svg v-if="!copiedImage" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" width="15" height="15">
+              <rect x="7" y="7" width="10" height="10" rx="2"/>
+              <path d="M4 13V4a1 1 0 0 1 1-1h9"/>
+            </svg>
+            <svg v-else viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+              <polyline points="4,10 8,14 16,6"/>
+            </svg>
+            {{ copiedImage ? '已复制' : '复制图片' }}
+          </button>
+          <button class="btn-ghost" @click="editPrompt">修改描述</button>
+          <button class="btn-ghost" @click="regenerate">重新生成</button>
         </div>
       </div>
 
@@ -219,6 +302,23 @@ onUnmounted(() => {
         </div>
 
         <div class="input-wrap">
+          <!-- 尺寸选择 -->
+          <div class="size-row">
+            <button
+              v-for="s in SIZES" :key="s.value"
+              class="size-btn" :class="{ active: selectedSize === s.value }"
+              @click="selectedSize = s.value"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="size-icon">
+                <rect v-if="s.value === '1024x1024'" x="4" y="4" width="16" height="16" rx="2"/>
+                <rect v-else-if="s.value === '1536x1024'" x="2" y="6" width="20" height="12" rx="2"/>
+                <rect v-else x="6" y="2" width="12" height="20" rx="2"/>
+              </svg>
+              <span class="size-label">{{ s.label }}</span>
+              <span class="size-desc">{{ s.desc }}</span>
+            </button>
+          </div>
+
           <!-- 参考图预览 -->
           <div v-if="refImagePreview" class="ref-preview">
             <img :src="refImagePreview" class="ref-thumb" alt="参考图" />
@@ -228,6 +328,7 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- 输入框 -->
           <textarea
             v-model="prompt"
             :disabled="isLoading"
@@ -235,8 +336,25 @@ onUnmounted(() => {
             rows="4"
             @keydown.meta.enter="generate"
           />
+
+          <!-- 风格标签 -->
+          <div class="styles-row">
+            <button
+              v-for="style in STYLES" :key="style"
+              class="style-chip" :class="{ active: activeStyles.includes(style) }"
+              @click="toggleStyle(style)"
+            >{{ style }}</button>
+          </div>
+
+          <!-- 底部操作栏 -->
           <div class="input-footer">
             <div class="footer-left">
+              <button class="btn-enhance" :disabled="isEnhancing || !prompt.trim()" @click="enhancePrompt">
+                <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                  <path d="M8 1l1.5 4.5L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5z"/>
+                </svg>
+                {{ isEnhancing ? '优化中...' : '优化描述' }}
+              </button>
               <button class="btn-upload" @click="fileInputRef?.click()">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" width="14" height="14">
                   <rect x="2" y="4" width="16" height="12" rx="2"/>
@@ -246,7 +364,7 @@ onUnmounted(() => {
                 {{ refImagePreview ? '更换参考图' : '上传参考图' }}
               </button>
               <input ref="fileInputRef" type="file" accept="image/*" class="file-input" @change="onFileChange" />
-              <span class="shortcut">⌘ + Enter 发送</span>
+              <span class="shortcut">⌘↩ 发送</span>
             </div>
             <button class="btn-gen" :disabled="isLoading || !prompt.trim()" @click="generate">
               生成图片
@@ -303,8 +421,7 @@ onUnmounted(() => {
             <small>生成图片后将在这里展示</small>
           </div>
           <div
-            v-for="item in history"
-            :key="item.id"
+            v-for="item in history" :key="item.id"
             class="hist-item"
             @click="loadHistory(item)"
           >
@@ -334,77 +451,50 @@ onUnmounted(() => {
   padding: 14px 28px;
   border-bottom: 1px solid var(--border);
 }
-
 .brand { display: flex; align-items: center; gap: 10px; }
 .logo-svg { width: 32px; height: 32px; }
 .brand-name { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
-
 .header-actions { display: flex; align-items: center; gap: 8px; }
 
 .btn-hist {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 13px;
+  display: flex; align-items: center; gap: 5px;
+  background: transparent; border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 12px; cursor: pointer; color: var(--text-2); font-size: 13px;
   transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
 .btn-hist:hover, .btn-hist.active {
-  color: var(--accent);
-  border-color: rgba(196,129,58,0.4);
-  background: rgba(196,129,58,0.06);
+  color: var(--accent); border-color: rgba(196,129,58,0.4); background: rgba(196,129,58,0.06);
 }
-
 .btn-icon {
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px;
-  cursor: pointer;
-  color: var(--text-2);
-  transition: color 0.2s, border-color 0.2s;
-  display: flex;
+  background: transparent; border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px; cursor: pointer; color: var(--text-2);
+  transition: color 0.2s, border-color 0.2s; display: flex;
 }
 .btn-icon:hover { color: var(--text); border-color: rgba(196,129,58,0.4); }
 .btn-icon svg { width: 17px; height: 17px; }
 
 /* ── Hero Banner ── */
 .hero-banner {
-  position: relative;
-  height: 140px;
-  overflow: hidden;
+  position: relative; height: 140px; overflow: hidden;
   border-bottom: 1px solid var(--border);
 }
 .banner-grid {
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   background-image:
     linear-gradient(rgba(196,129,58,0.07) 1px, transparent 1px),
     linear-gradient(90deg, rgba(196,129,58,0.07) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 .banner-glow {
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   background: radial-gradient(ellipse 60% 120% at 50% 50%, rgba(196,129,58,0.13) 0%, transparent 70%);
 }
 .banner-frames {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 18px;
 }
 .frame {
-  border: 1px solid rgba(196,129,58,0.35);
-  border-radius: 7px;
-  overflow: hidden;
+  border: 1px solid rgba(196,129,58,0.35); border-radius: 7px; overflow: hidden;
   box-shadow: 0 6px 20px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
 }
 .frame-inner { width: 100%; height: 100%; }
@@ -418,147 +508,121 @@ onUnmounted(() => {
 @keyframes float2 { 0%,100% { transform: translateY(0); } 50% { transform: translateY(7px); } }
 
 .banner-badge {
-  position: absolute;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--accent);
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  padding: 3px 10px;
-  border: 1px solid rgba(196,129,58,0.22);
-  border-radius: 99px;
-  background: rgba(18,14,9,0.7);
-  white-space: nowrap;
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; color: var(--accent); letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 3px 10px; border: 1px solid rgba(196,129,58,0.22); border-radius: 99px;
+  background: rgba(18,14,9,0.7); white-space: nowrap;
 }
 
 /* ── Main ── */
 .main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 44px 24px 60px;
-  gap: 28px;
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-start;
+  padding: 44px 24px 60px; gap: 28px;
 }
 
 /* ── Hero Text ── */
 .hero { text-align: center; }
 .eyebrow {
-  display: inline-block;
-  font-size: 12px;
-  color: var(--accent);
-  letter-spacing: 1.4px;
-  text-transform: uppercase;
-  margin-bottom: 16px;
-  padding: 4px 14px;
-  border: 1px solid rgba(196,129,58,0.25);
-  border-radius: 99px;
+  display: inline-block; font-size: 12px; color: var(--accent);
+  letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 16px;
+  padding: 4px 14px; border: 1px solid rgba(196,129,58,0.25); border-radius: 99px;
 }
-.title {
-  font-size: 40px;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--text);
-  margin-bottom: 14px;
-  letter-spacing: -0.8px;
-}
+.title { font-size: 40px; font-weight: 700; line-height: 1.2; color: var(--text); margin-bottom: 14px; letter-spacing: -0.8px; }
 .subtitle { font-size: 16px; color: var(--text-2); }
 
-/* ── Input ── */
+/* ── Input Card ── */
 .input-wrap {
-  width: 100%;
-  max-width: 680px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  overflow: hidden;
-  transition: border-color 0.2s;
+  width: 100%; max-width: 680px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+  overflow: hidden; transition: border-color 0.2s;
 }
 .input-wrap:focus-within { border-color: rgba(196,129,58,0.45); }
 
+/* Size selector */
+.size-row {
+  display: flex; gap: 8px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+}
+.size-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 8px; background: transparent; border: 1px solid var(--border);
+  border-radius: 10px; cursor: pointer; color: var(--text-2);
+  transition: all 0.2s;
+}
+.size-btn:hover { border-color: rgba(196,129,58,0.3); color: var(--text); }
+.size-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(196,129,58,0.08); }
+.size-icon { width: 20px; height: 20px; }
+.size-label { font-size: 13px; font-weight: 600; }
+.size-desc { font-size: 11px; opacity: 0.6; }
+
+/* Reference image */
 .ref-preview {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
   background: rgba(196,129,58,0.04);
 }
-.ref-thumb {
-  width: 52px;
-  height: 52px;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
+.ref-thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
 .ref-meta { display: flex; flex-direction: column; gap: 4px; }
 .ref-label { font-size: 12px; color: var(--accent); }
-.ref-clear {
-  font-size: 12px;
-  color: var(--text-3);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  text-align: left;
-  transition: color 0.2s;
-}
+.ref-clear { font-size: 12px; color: var(--text-3); background: none; border: none; cursor: pointer; padding: 0; transition: color 0.2s; }
 .ref-clear:hover { color: #E07050; }
 
+/* Textarea */
 textarea {
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.7;
-  padding: 20px;
-  resize: none;
-  outline: none;
-  font-family: inherit;
+  width: 100%; background: transparent; border: none;
+  color: var(--text); font-size: 16px; line-height: 1.7;
+  padding: 20px; resize: none; outline: none; font-family: inherit;
 }
 textarea::placeholder { color: var(--text-3); }
 textarea:disabled { opacity: 0.45; }
 
-.input-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
+/* Style chips */
+.styles-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 16px; border-top: 1px solid var(--border);
 }
-.footer-left { display: flex; align-items: center; gap: 12px; }
+.style-chip {
+  padding: 5px 12px; background: transparent;
+  border: 1px solid var(--border); border-radius: 99px;
+  color: var(--text-2); font-size: 12px; cursor: pointer;
+  transition: all 0.2s; white-space: nowrap;
+}
+.style-chip:hover { border-color: rgba(196,129,58,0.3); color: var(--text); }
+.style-chip.active { border-color: var(--accent); color: var(--accent); background: rgba(196,129,58,0.1); }
+
+/* Footer */
+.input-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+}
+.footer-left { display: flex; align-items: center; gap: 8px; }
+
+.btn-enhance {
+  display: flex; align-items: center; gap: 5px;
+  background: transparent; border: 1px solid rgba(196,129,58,0.3);
+  border-radius: 7px; padding: 5px 10px; cursor: pointer;
+  color: var(--accent); font-size: 12px; font-weight: 500;
+  transition: all 0.2s; white-space: nowrap;
+}
+.btn-enhance:hover:not(:disabled) { background: rgba(196,129,58,0.08); }
+.btn-enhance:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .btn-upload {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 5px 10px;
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 12px;
-  transition: color 0.2s, border-color 0.2s;
+  display: flex; align-items: center; gap: 5px;
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 7px; padding: 5px 10px; cursor: pointer;
+  color: var(--text-2); font-size: 12px; transition: all 0.2s; white-space: nowrap;
 }
 .btn-upload:hover { color: var(--text); border-color: rgba(196,129,58,0.35); }
-
 .file-input { display: none; }
 .shortcut { font-size: 12px; color: var(--text-3); }
 
 .btn-gen {
   padding: 9px 22px;
   background: linear-gradient(135deg, var(--accent), var(--accent-dk));
-  border: none;
-  border-radius: 9px;
-  color: #FFF8F0;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
+  border: none; border-radius: 9px; color: #FFF8F0;
+  font-size: 14px; font-weight: 600; cursor: pointer;
   transition: opacity 0.2s, transform 0.1s;
   box-shadow: 0 3px 12px rgba(196,129,58,0.28);
 }
@@ -570,142 +634,83 @@ textarea:disabled { opacity: 0.45; }
 
 /* ── Result ── */
 .result {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
-  width: 100%;
-  max-width: 580px;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 16px; width: 100%; max-width: 580px;
 }
 .result-img {
-  width: 100%;
-  max-height: 62vh;
-  object-fit: contain;
+  width: 100%; max-height: 62vh; object-fit: contain;
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px var(--border);
   animation: fadeUp 0.45s ease;
 }
 .result-prompt {
-  width: 100%;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 16px;
+  width: 100%; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px;
 }
-.result-prompt-label {
-  display: block;
-  font-size: 11px;
-  color: var(--accent);
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-.result-prompt-text {
-  font-size: 14px;
-  color: var(--text-2);
-  line-height: 1.6;
-}
-.result-bar { display: flex; gap: 12px; }
+.result-prompt-label { display: block; font-size: 11px; color: var(--accent); letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 6px; }
+.result-prompt-text { font-size: 14px; color: var(--text-2); line-height: 1.6; }
+
+.result-bar { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
 .btn-dl {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 22px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 18px;
   background: linear-gradient(135deg, var(--accent), var(--accent-dk));
-  border: none;
-  border-radius: 9px;
-  color: #FFF8F0;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-  box-shadow: 0 3px 12px rgba(196,129,58,0.28);
+  border: none; border-radius: 9px; color: #FFF8F0;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: opacity 0.2s; box-shadow: 0 3px 12px rgba(196,129,58,0.28);
 }
 .btn-dl:hover { opacity: 0.88; }
+
+.btn-copy {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 18px; background: transparent;
+  border: 1px solid var(--border); border-radius: 9px;
+  color: var(--text-2); font-size: 14px; cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-copy:hover { border-color: rgba(196,129,58,0.4); color: var(--text); }
+.btn-copy.done { border-color: rgba(100,200,120,0.4); color: #6dc87a; }
+
 .btn-ghost {
-  padding: 10px 22px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  color: var(--text-2);
-  font-size: 14px;
-  cursor: pointer;
+  padding: 10px 18px; background: transparent;
+  border: 1px solid var(--border); border-radius: 9px;
+  color: var(--text-2); font-size: 14px; cursor: pointer;
   transition: border-color 0.2s, color 0.2s;
 }
 .btn-ghost:hover { border-color: rgba(196,129,58,0.4); color: var(--text); }
 
 /* ── Loading Overlay ── */
 .overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(18, 14, 9, 0.9);
-  backdrop-filter: blur(10px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
+  position: fixed; inset: 0; background: rgba(18,14,9,0.9);
+  backdrop-filter: blur(10px); display: flex;
+  align-items: center; justify-content: center; z-index: 100;
 }
-.loader-box {
-  text-align: center;
-  padding: 48px 40px;
-  width: 360px;
-}
-.rings {
-  position: relative;
-  width: 76px;
-  height: 76px;
-  margin: 0 auto 32px;
-}
+.loader-box { text-align: center; padding: 48px 40px; width: 360px; }
+.rings { position: relative; width: 76px; height: 76px; margin: 0 auto 32px; }
 .ring-outer {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
+  position: absolute; inset: 0; border-radius: 50%;
   border: 2.5px solid transparent;
-  border-top-color: var(--accent);
-  border-right-color: var(--accent-lt);
+  border-top-color: var(--accent); border-right-color: var(--accent-lt);
   animation: spin 1.4s linear infinite;
 }
 .ring-inner {
-  position: absolute;
-  inset: 13px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  border-bottom-color: var(--accent-dk);
+  position: absolute; inset: 13px; border-radius: 50%;
+  border: 2px solid transparent; border-bottom-color: var(--accent-dk);
   animation: spin 0.9s linear infinite reverse;
 }
 .ring-dot {
-  position: absolute;
-  inset: 29px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.6;
+  position: absolute; inset: 29px; border-radius: 50%;
+  background: var(--accent); opacity: 0.6;
   animation: pulse 1.4s ease-in-out infinite;
 }
-.loader-msg {
-  font-size: 16px;
-  color: var(--text);
-  font-weight: 500;
-  margin-bottom: 28px;
-  min-height: 24px;
-}
-.prog-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.prog-track {
-  flex: 1;
-  height: 5px;
-  background: rgba(255,255,255,0.06);
-  border-radius: 99px;
-  overflow: hidden;
-}
+.loader-msg { font-size: 16px; color: var(--text); font-weight: 500; margin-bottom: 28px; min-height: 24px; }
+.prog-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.prog-track { flex: 1; height: 5px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; }
 .prog-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-dk), var(--accent-lt));
-  border-radius: 99px;
-  transition: width 0.9s ease;
+  border-radius: 99px; transition: width 0.9s ease;
   box-shadow: 0 0 8px rgba(196,129,58,0.5);
 }
 .prog-pct { font-size: 12px; color: var(--text-2); width: 34px; text-align: right; }
@@ -713,89 +718,42 @@ textarea:disabled { opacity: 0.45; }
 
 /* ── History Drawer ── */
 .drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 300px;
-  background: var(--bg-card);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  z-index: 90;
+  position: fixed; top: 0; right: 0; bottom: 0; width: 300px;
+  background: var(--bg-card); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; z-index: 90;
   box-shadow: -20px 0 60px rgba(0,0,0,0.5);
 }
 .drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .drawer-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .drawer-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-2);
-  display: flex;
-  padding: 4px;
-  border-radius: 6px;
-  transition: color 0.2s, background 0.2s;
+  background: none; border: none; cursor: pointer; color: var(--text-2);
+  display: flex; padding: 4px; border-radius: 6px; transition: color 0.2s, background 0.2s;
 }
 .drawer-close:hover { color: var(--text); background: rgba(255,255,255,0.05); }
 .drawer-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
 }
 .drawer-body::-webkit-scrollbar { width: 4px; }
 .drawer-body::-webkit-scrollbar-track { background: transparent; }
 .drawer-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
-
 .drawer-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 48px 16px;
-  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 48px 16px; text-align: center;
 }
 .drawer-empty p { font-size: 14px; color: var(--text-2); }
 .drawer-empty small { font-size: 12px; color: var(--text-3); }
-
 .hist-item {
-  cursor: pointer;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  transition: border-color 0.2s, transform 0.15s;
+  cursor: pointer; border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; transition: border-color 0.2s, transform 0.15s;
 }
 .hist-item:hover { border-color: rgba(196,129,58,0.4); transform: translateY(-1px); }
-.hist-thumb {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  display: block;
-}
-.hist-prompt {
-  padding: 9px 12px;
-  font-size: 12px;
-  color: var(--text-2);
-  line-height: 1.5;
-  border-top: 1px solid var(--border);
-}
-
-.drawer-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.4);
-  z-index: 89;
-}
+.hist-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.hist-prompt { padding: 9px 12px; font-size: 12px; color: var(--text-2); line-height: 1.5; border-top: 1px solid var(--border); }
+.drawer-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 89; }
 
 /* ── Transitions ── */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
