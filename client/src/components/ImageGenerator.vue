@@ -14,6 +14,7 @@ interface HistoryItem {
 const prompt = ref('')
 const isLoading = ref(false)
 const imageUrl = ref('')
+const generatedPrompt = ref('')
 const errorMsg = ref('')
 const progress = ref(0)
 const currentMsgIndex = ref(0)
@@ -107,6 +108,7 @@ const generate = async () => {
     const data = await res.json()
     if (data.imageBase64) {
       imageUrl.value = `data:image/png;base64,${data.imageBase64}`
+      generatedPrompt.value = prompt.value.trim()
       history.value.unshift({
         id: Date.now().toString(),
         prompt: prompt.value.trim(),
@@ -192,6 +194,10 @@ onUnmounted(() => {
       <!-- 结果展示 -->
       <div v-if="imageUrl" class="result">
         <img :src="imageUrl" alt="生成图片" class="result-img" />
+        <div class="result-prompt">
+          <span class="result-prompt-label">提示词</span>
+          <p class="result-prompt-text">{{ generatedPrompt }}</p>
+        </div>
         <div class="result-bar">
           <button class="btn-dl" @click="downloadImage">
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -573,9 +579,31 @@ textarea:disabled { opacity: 0.45; }
 }
 .result-img {
   width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px var(--border);
   animation: fadeUp 0.45s ease;
+}
+.result-prompt {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.result-prompt-label {
+  display: block;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.result-prompt-text {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.6;
 }
 .result-bar { display: flex; gap: 12px; }
 .btn-dl {
