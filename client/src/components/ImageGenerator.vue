@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 
-const props = defineProps<{ apiKey: string; baseUrl: string }>()
-const emit = defineEmits<{ settings: [] }>()
+const props = defineProps<{ apiKey: string; baseUrl: string; activePage?: string }>()
+const emit = defineEmits<{ settings: []; 'switch-page': [page: string] }>()
 
 // ── Types ─────────────────────────────────────────────────────
 interface Task {
@@ -283,7 +283,16 @@ onUnmounted(() => { timerCleanup?.() })
           <text x="8" y="26" font-size="20" font-weight="700" fill="#EAD9C0" font-family="serif">D</text>
           <rect x="8" y="28" width="20" height="1.5" rx="1" fill="#C4813A" opacity="0.7"/>
         </svg>
-        <span class="brand-name">Deepin Image</span>
+        <span class="brand-name">Deepin</span>
+        <!-- Page tabs live in the header -->
+        <div class="header-tabs">
+          <button :class="['htab', { active: (props.activePage ?? 'image') === 'image' }]" @click="emit('switch-page', 'image')">
+            AI 图像
+          </button>
+          <button :class="['htab', { active: props.activePage === 'ppt' }]" @click="emit('switch-page', 'ppt')">
+            AI PPT
+          </button>
+        </div>
       </div>
       <div class="header-actions">
         <button class="btn-hist" :class="{ active: showHistory }" @click="showHistory = !showHistory">
@@ -553,11 +562,39 @@ onUnmounted(() => { timerCleanup?.() })
 /* ── Header ── */
 .header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 28px; border-bottom: 1px solid var(--border);
+  padding: 12px 28px; border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .logo-svg { width: 32px; height: 32px; }
 .brand-name { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
+
+.header-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 18px;
+  padding: 3px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 9px;
+  border: 1px solid var(--border);
+}
+.htab {
+  padding: 5px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.htab:hover { color: var(--text); }
+.htab.active {
+  background: rgba(196,129,58,0.15);
+  color: var(--accent-lt);
+}
+
 .header-actions { display: flex; align-items: center; gap: 8px; }
 
 .btn-hist {

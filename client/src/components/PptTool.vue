@@ -6,6 +6,12 @@ const props = defineProps<{
   baseUrl: string
   cursorKey: string
   cursorModel: string
+  activePage?: string
+}>()
+
+const emit = defineEmits<{
+  'switch-page': [page: string]
+  'settings': []
 }>()
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -183,16 +189,42 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
     <!-- INPUT PHASE ─────────────────────────────────────────── -->
     <div v-if="phase === 'input'" class="input-wrap">
       <div class="input-card">
-        <div class="input-header">
+        <!-- Unified page header (same pattern as ImageGenerator) -->
+        <div class="ppt-page-header">
+          <div class="ppt-brand">
+            <svg viewBox="0 0 36 36" fill="none" width="32" height="32">
+              <rect width="36" height="36" rx="9" fill="#2A1A0C"/>
+              <text x="8" y="26" font-size="20" font-weight="700" fill="#EAD9C0" font-family="serif">D</text>
+              <rect x="8" y="28" width="20" height="1.5" rx="1" fill="#C4813A" opacity="0.7"/>
+            </svg>
+            <span class="ppt-brand-name">Deepin</span>
+            <div class="ppt-tabs">
+              <button class="ptab" @click="emit('switch-page', 'image')">AI 图像</button>
+              <button class="ptab active">AI PPT</button>
+            </div>
+          </div>
+          <div class="ppt-header-actions">
+            <span v-if="usingCursor" class="cursor-badge">Cursor</span>
+            <button class="btn-settings-sm" @click="emit('settings')" title="API 设置">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">
+                <circle cx="8" cy="8" r="2.2"/>
+                <path d="M8 2v1.2M8 12.8V14M2 8h1.2M12.8 8H14M3.5 3.5l.85.85M11.65 11.65l.85.85M12.5 3.5l-.85.85M4.35 11.65l-.85.85"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="input-divider" />
+
+        <div class="input-sub-header">
           <div class="input-title">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" width="20" height="20">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" width="18" height="18">
               <rect x="1" y="2" width="18" height="16" rx="3"/>
               <path d="M6 8h5a2 2 0 0 1 0 4H6V8z"/>
               <line x1="6" y1="14" x2="10" y2="14"/>
             </svg>
             AI PPT 生成器
           </div>
-          <span v-if="usingCursor" class="cursor-badge">Cursor</span>
         </div>
 
         <p class="input-desc">输入演示主题，AI 自动生成带结构、带文案的完整幻灯片，支持单页精准修改。</p>
@@ -265,12 +297,18 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
     <!-- PREVIEW PHASE ───────────────────────────────────────── -->
     <template v-else-if="phase === 'preview' && doc">
       <div class="preview-header">
-        <button class="btn-back" @click="resetToInput">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <polyline points="10,3 4,8 10,13"/>
+        <div class="preview-brand">
+          <svg viewBox="0 0 36 36" fill="none" width="28" height="28">
+            <rect width="36" height="36" rx="9" fill="#2A1A0C"/>
+            <text x="8" y="26" font-size="20" font-weight="700" fill="#EAD9C0" font-family="serif">D</text>
+            <rect x="8" y="28" width="20" height="1.5" rx="1" fill="#C4813A" opacity="0.7"/>
           </svg>
-          重新生成
-        </button>
+          <span class="preview-brand-name">Deepin</span>
+          <div class="ppt-tabs ppt-tabs-preview">
+            <button class="ptab" @click="emit('switch-page', 'image')">AI 图像</button>
+            <button class="ptab active">AI PPT</button>
+          </div>
+        </div>
 
         <div class="doc-title-wrap">
           <h2 class="doc-title">{{ doc.title }}</h2>
@@ -278,6 +316,12 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
         </div>
 
         <div class="preview-actions">
+          <button class="btn-rewrite" @click="resetToInput">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" width="12" height="12">
+              <path d="M1 7a6 6 0 1 0 1-3.5"/><polyline points="1,2 1,5.5 4.5,5.5"/>
+            </svg>
+            重新生成
+          </button>
           <span v-if="usingCursor" class="cursor-badge">Cursor</span>
           <span class="slide-count">{{ doc.slides.length }} 页</span>
           <button class="btn-export" :disabled="isExporting" @click="exportPPT">
@@ -388,23 +432,124 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
   overflow: hidden;
 }
 
-/* ── Input phase ── */
+/* ── Input page header (mirrors ImageGenerator's header) ── */
+.ppt-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.ppt-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ppt-brand-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+
+.ppt-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 14px;
+  padding: 3px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 9px;
+  border: 1px solid var(--border);
+}
+.ptab {
+  padding: 5px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.ptab:hover { color: var(--text); }
+.ptab.active { background: rgba(196,129,58,0.15); color: var(--accent-lt); }
+
+.ppt-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-settings-sm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-settings-sm:hover { color: var(--text); border-color: rgba(196,129,58,0.3); }
+
+.input-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
+.input-sub-header {
+  margin-bottom: 8px;
+}
+
+/* ── Preview header updates for brand ── */
+.preview-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.preview-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.ppt-tabs-preview {
+  margin-left: 10px;
+}
+
+.btn-rewrite {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn-rewrite:hover { color: var(--text); border-color: rgba(196,129,58,0.3); }
 .input-wrap {
   flex: 1;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 40px 24px;
+  padding: 32px 24px 40px;
   overflow-y: auto;
 }
 
 .input-card {
   width: 100%;
-  max-width: 640px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 36px;
+  max-width: 660px;
 }
 
 .input-header {
@@ -486,8 +631,8 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
 .preview-header {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 24px;
+  gap: 12px;
+  padding: 10px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
   flex-shrink: 0;
