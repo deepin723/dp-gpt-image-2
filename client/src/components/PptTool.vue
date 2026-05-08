@@ -33,6 +33,37 @@ const isEditing         = ref(false)
 const isExporting       = ref(false)
 const errorMsg          = ref('')
 
+// Reference PPT upload
+const refPptName   = ref('')
+const refPptBase64 = ref('')
+const refFileInput = ref<HTMLInputElement | null>(null)
+
+const onRefPptChange = (e: Event) => {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.pptx')) {
+    showToast('请上传 .pptx 格式文件', 'error')
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showToast('文件超过 20MB，请压缩后再试', 'error')
+    return
+  }
+  refPptName.value = file.name
+  const reader = new FileReader()
+  reader.onload = (ev) => {
+    const dataUrl = ev.target?.result as string
+    refPptBase64.value = dataUrl.split(',')[1] // strip "data:...;base64,"
+  }
+  reader.readAsDataURL(file)
+}
+
+const clearRefPpt = () => {
+  refPptName.value = ''
+  refPptBase64.value = ''
+  if (refFileInput.value) refFileInput.value.value = ''
+}
+
 // ── Toast ──────────────────────────────────────────────────────────────────
 interface Toast { id: number; msg: string; type: 'success' | 'error' | 'info' }
 const toasts = ref<Toast[]>([])
@@ -62,7 +93,11 @@ const generate = async () => {
     const resp = await fetch('/api/ppt/generate', {
       method: 'POST',
       headers: pptHeaders(),
-      body: JSON.stringify({ topic: topic.value.trim(), outline: outline.value.trim() || undefined }),
+      body: JSON.stringify({
+        topic: topic.value.trim(),
+        outline: outline.value.trim() || undefined,
+        referencePptBase64: refPptBase64.value || undefined,
+      }),
     })
     const data = await resp.json()
     if (!resp.ok || data.error) throw new Error(data.error || '生成失败')
@@ -183,6 +218,34 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
           />
         </div>
 
+        <!-- Reference PPT upload -->
+        <div class="field">
+          <label>参考 PPT <em>（可选，上传后 AI 会借鉴其内容、结构或风格）</em></label>
+          <input
+            ref="refFileInput"
+            type="file"
+            accept=".pptx"
+            style="display:none"
+            @change="onRefPptChange"
+          />
+          <div v-if="refPptName" class="ref-file-chip">
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13">
+              <rect x="2" y="1" width="10" height="12" rx="1.5"/>
+              <line x1="4" y1="5" x2="10" y2="5"/>
+              <line x1="4" y1="7.5" x2="10" y2="7.5"/>
+              <line x1="4" y1="10" x2="7" y2="10"/>
+            </svg>
+            <span class="ref-file-name">{{ refPptName }}</span>
+            <button class="ref-file-remove" @click="clearRefPpt" title="移除参考文件">×</button>
+          </div>
+          <button v-else class="btn-upload-ref" @click="refFileInput?.click()">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
+              <path d="M3 12h10M8 2v8M5 5l3-3 3 3"/>
+            </svg>
+            上传参考 PPT（.pptx）
+          </button>
+        </div>
+
         <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
 
         <button
@@ -194,7 +257,7 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
           <svg v-else viewBox="0 0 16 16" fill="currentColor" width="15" height="15">
             <path d="M8 1l1.5 4L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5z"/>
           </svg>
-          {{ isGenerating ? 'AI 生成中，请稍候...' : '一键生成 PPT' }}
+          {{ isGenerating ? 'AI 生成中，请稍候...' : refPptName ? '借鉴参考内容生成 PPT' : '一键生成 PPT' }}
         </button>
       </div>
     </div>
@@ -728,4 +791,59 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
 .toast-leave-active { transition: all 0.2s ease; }
 .toast-enter-from   { opacity: 0; transform: translateX(20px) scale(0.94); }
 .toast-leave-to     { opacity: 0; transform: translateX(10px); }
+
+/* ── Reference PPT upload ── */
+.btn-upload-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  background: transparent;
+  border: 1px dashed rgba(196,129,58,0.35);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn-upload-ref:hover {
+  color: var(--accent-lt);
+  border-color: rgba(196,129,58,0.6);
+  background: rgba(196,129,58,0.05);
+}
+
+.ref-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(196,129,58,0.08);
+  border: 1px solid rgba(196,129,58,0.25);
+  border-radius: 8px;
+  color: var(--accent-lt);
+  font-size: 13px;
+  max-width: 100%;
+}
+
+.ref-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ref-file-remove {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.ref-file-remove:hover { color: #E07050; }
 </style>

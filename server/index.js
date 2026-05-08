@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import pptxgen from 'pptxgenjs'
+import JSZip from 'jszip'
 import { spawn } from 'child_process'
 import { tmpdir } from 'os'
 import fs from 'fs'
@@ -14,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
 app.use(cors())
-app.use(express.json({ limit: '10mb' }))
+app.use(express.json({ limit: '25mb' }))
 
 /**
  * POST /api/generate-image
@@ -157,6 +158,32 @@ app.post('/api/enhance-prompt', async (req, res) => {
 
 // ── PPT helpers ──────────────────────────────────────────────────────────────
 
+// Parse a base64-encoded .pptx and return a text summary of each slide
+async function extractPptxText(base64) {
+  const buf = Buffer.from(base64, 'base64')
+  const zip = await JSZip.loadAsync(buf)
+  const slideFiles = Object.keys(zip.files)
+    .filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/\d+/)[0])
+      const nb = parseInt(b.match(/\d+/)[0])
+      return na - nb
+    })
+  const slides = []
+  for (const name of slideFiles) {
+    const xml = await zip.files[name].async('string')
+    const texts = []
+    let m
+    const re = /<a:t[^>]*>([^<]+)<\/a:t>/g
+    while ((m = re.exec(xml)) !== null) {
+      const t = m[1].trim()
+      if (t) texts.push(t)
+    }
+    if (texts.length) slides.push(texts.join(' | '))
+  }
+  return slides
+}
+
 const PPT_GEN_SYSTEM = `You are a presentation outline designer. Return ONLY valid JSON (no markdown fences):
 {
   "title": "presentation title",
@@ -220,7 +247,7 @@ async function callLLM({ apiKey, baseUrl, cursorKey, cursorModel, system, user }
 // ── PPT routes ────────────────────────────────────────────────────────────────
 
 app.post('/api/ppt/generate', async (req, res) => {
-  const { topic, outline } = req.body
+  const { topic, outline, referencePptBase64 } = req.body
   const apiKey    = req.headers['x-api-key']
   const baseUrl   = (req.headers['x-base-url'] || 'https://bobdong.cn/v1').replace(/\/$/, '')
   const cursorKey = req.headers['x-cursor-key']
@@ -229,7 +256,21 @@ app.post('/api/ppt/generate', async (req, res) => {
   if (!apiKey && !cursorKey) return res.status(401).json({ error: '请先配置 API Key 或 Cursor Key' })
   if (!topic?.trim()) return res.status(400).json({ error: '请输入 PPT 主题' })
 
-  const user = outline ? `Topic: ${topic}\n\nOutline:\n${outline}` : `Topic: ${topic}`
+  let user = outline ? `Topic: ${topic}\n\nOutline:\n${outline}` : `Topic: ${topic}`
+
+  // Inject reference PPT content if provided
+  if (referencePptBase64) {
+    try {
+      const refSlides = await extractPptxText(referencePptBase64)
+      if (refSlides.length) {
+        const refText = refSlides.map((s, i) => `Slide ${i + 1}: ${s}`).join('\n')
+        user = `Reference PPT (borrow its structure, key points, or style where helpful):\n${refText}\n\n---\n\n${user}`
+      }
+    } catch (e) {
+      console.warn('[ppt/generate] reference parse failed:', e.message)
+    }
+  }
+
   try {
     const raw = await callLLM({ apiKey, baseUrl, cursorKey, cursorModel, system: PPT_GEN_SYSTEM, user })
     res.json(parseJsonStrict(raw))
