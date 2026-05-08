@@ -158,17 +158,15 @@ app.post('/api/enhance-prompt', async (req, res) => {
 
 // ── PPT helpers ──────────────────────────────────────────────────────────────
 
-// Parse a base64-encoded .pptx and return a text summary of each slide
-async function extractPptxText(base64) {
+// Parse a base64-encoded .pptx — returns slide texts AND embedded images
+async function extractPptxContent(base64) {
   const buf = Buffer.from(base64, 'base64')
   const zip = await JSZip.loadAsync(buf)
+
+  // ── Extract slide text ───────────────────────────────────────────────────
   const slideFiles = Object.keys(zip.files)
     .filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
-    .sort((a, b) => {
-      const na = parseInt(a.match(/\d+/)[0])
-      const nb = parseInt(b.match(/\d+/)[0])
-      return na - nb
-    })
+    .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]))
   const slides = []
   for (const name of slideFiles) {
     const xml = await zip.files[name].async('string')
@@ -181,7 +179,22 @@ async function extractPptxText(base64) {
     }
     if (texts.length) slides.push(texts.join(' | '))
   }
-  return slides
+
+  // ── Extract embedded images ──────────────────────────────────────────────
+  const imageFiles = Object.keys(zip.files)
+    .filter(n => /^ppt\/media\/.*\.(jpg|jpeg|png)$/i.test(n))
+  const images = []
+  for (const name of imageFiles) {
+    const arrayBuf = await zip.files[name].async('arraybuffer')
+    if (arrayBuf.byteLength < 15000) continue  // skip tiny icons / thumbnails
+    const b64 = Buffer.from(arrayBuf).toString('base64')
+    const mime = /\.png$/i.test(name) ? 'image/png' : 'image/jpeg'
+    images.push({ base64: b64, mime, size: arrayBuf.byteLength })
+  }
+  // Sort by file size descending (larger = more likely to be content photos)
+  images.sort((a, b) => b.size - a.size)
+
+  return { slides, images: images.slice(0, 10) }
 }
 
 const PPT_GEN_SYSTEM = `You are a presentation outline designer. Return ONLY valid JSON (no markdown fences):
@@ -261,9 +274,9 @@ app.post('/api/ppt/generate', async (req, res) => {
   // Inject reference PPT content if provided
   if (referencePptBase64) {
     try {
-      const refSlides = await extractPptxText(referencePptBase64)
-      if (refSlides.length) {
-        const refText = refSlides.map((s, i) => `Slide ${i + 1}: ${s}`).join('\n')
+      const ref = await extractPptxContent(referencePptBase64)
+      if (ref.slides.length) {
+        const refText = ref.slides.map((s, i) => `Slide ${i + 1}: ${s}`).join('\n')
         user = `Reference PPT (borrow its structure, key points, or style where helpful):\n${refText}\n\n---\n\n${user}`
       }
     } catch (e) {
@@ -301,8 +314,20 @@ app.post('/api/ppt/edit-slide', async (req, res) => {
 })
 
 app.post('/api/ppt/export', async (req, res) => {
-  const { title, subtitle, slides } = req.body
+  const { title, subtitle, slides, referencePptBase64 } = req.body
   if (!slides?.length) return res.status(400).json({ error: '无幻灯片数据' })
+
+  // Extract reference images if a reference PPT was uploaded
+  let refImages = []
+  if (referencePptBase64) {
+    try {
+      const ref = await extractPptxContent(referencePptBase64)
+      refImages = ref.images
+      console.log(`[ppt/export] extracted ${refImages.length} reference images`)
+    } catch (e) {
+      console.warn('[ppt/export] reference image extraction failed:', e.message)
+    }
+  }
 
   try {
     const prs = new pptxgen()
@@ -322,14 +347,36 @@ app.post('/api/ppt/export', async (req, res) => {
       const c = accents[i % accents.length]
       const s = prs.addSlide()
       s.background = { color: '1C1510' }
+
+      // Left accent bar
       s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: 0.07, h: 5.63, fill: { color: c }, line: { transparency: 100 } })
-      s.addShape(prs.ShapeType.ellipse, { x: 8, y: -0.8, w: 3, h: 3, fill: { color: c, transparency: 90 }, line: { transparency: 100 } })
-      s.addText(sd.title || '', { x: 0.25, y: 0.2, w: 9.7, h: 0.8, fontSize: 22, bold: true, color: 'E8A86A', wrap: true })
-      s.addShape(prs.ShapeType.line, { x: 0.25, y: 1.08, w: 9.7, h: 0, line: { color: c, width: 0.75 } })
-      if (sd.bullets?.length) {
-        s.addText(sd.bullets.map(b => `  •  ${b}`).join('\n'), { x: 0.25, y: 1.25, w: 9.5, h: 4.1, fontSize: 15, color: 'C8B89A', lineSpacingMultiple: 1.6, valign: 'top', wrap: true })
+
+      // Place reference image on right panel if available
+      const refImg = refImages.length > 0 ? refImages[i % refImages.length] : null
+      const textW = refImg ? 5.55 : 9.5
+
+      if (refImg) {
+        // Image panel (right half)
+        s.addImage({ data: `data:${refImg.mime};base64,${refImg.base64}`, x: 5.9, y: 0.0, w: 4.1, h: 5.63 })
+        // Semi-transparent dark overlay so brand colors show through
+        s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: '000000', transparency: 35 }, line: { transparency: 100 } })
+        // Subtle accent tint
+        s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: c, transparency: 85 }, line: { transparency: 100 } })
+      } else {
+        // Decorative glow when no image
+        s.addShape(prs.ShapeType.ellipse, { x: 8, y: -0.8, w: 3, h: 3, fill: { color: c, transparency: 90 }, line: { transparency: 100 } })
       }
-      s.addText(`${i + 1} / ${slides.length}`, { x: 8.5, y: 5.2, w: 1.2, h: 0.3, fontSize: 10, color: '4A3525', align: 'right' })
+
+      // Title
+      s.addText(sd.title || '', { x: 0.25, y: 0.2, w: textW, h: 0.8, fontSize: 22, bold: true, color: 'E8A86A', wrap: true })
+      // Divider
+      s.addShape(prs.ShapeType.line, { x: 0.25, y: 1.08, w: textW, h: 0, line: { color: c, width: 0.75 } })
+      // Bullets
+      if (sd.bullets?.length) {
+        s.addText(sd.bullets.map(b => `  •  ${b}`).join('\n'), { x: 0.25, y: 1.25, w: textW, h: 4.1, fontSize: 15, color: 'C8B89A', lineSpacingMultiple: 1.6, valign: 'top', wrap: true })
+      }
+      // Page number
+      s.addText(`${i + 1} / ${slides.length}`, { x: 4.5, y: 5.2, w: 1.2, h: 0.3, fontSize: 10, color: '4A3525', align: 'right' })
     }
 
     const buffer = await prs.write('nodebuffer')

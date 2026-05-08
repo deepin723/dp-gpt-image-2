@@ -146,7 +146,10 @@ const exportPPT = async () => {
     const resp = await fetch('/api/ppt/export', {
       method: 'POST',
       headers: pptHeaders(),
-      body: JSON.stringify(doc.value),
+      body: JSON.stringify({
+        ...doc.value,
+        referencePptBase64: refPptBase64.value || undefined,
+      }),
     })
     if (!resp.ok) {
       const err = await resp.json()
