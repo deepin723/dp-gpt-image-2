@@ -51,8 +51,8 @@ const onRefPptChange = (e: Event) => {
     showToast('请上传 .pptx 格式文件', 'error')
     return
   }
-  if (file.size > 20 * 1024 * 1024) {
-    showToast('文件超过 20MB，请压缩后再试', 'error')
+  if (file.size > 30 * 1024 * 1024) {
+    showToast('文件超过 30MB，请压缩后再试', 'error')
     return
   }
   refPptName.value = file.name

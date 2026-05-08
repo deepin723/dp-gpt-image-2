@@ -15,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
 app.use(cors())
-app.use(express.json({ limit: '25mb' }))
+app.use(express.json({ limit: '45mb' }))
 
 /**
  * POST /api/generate-image
