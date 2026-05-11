@@ -31,10 +31,10 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
 }
 
 const loadServerSettings = async () => {
-  try {
+  const attempt = async () => {
     const headers = await getAuthHeaders()
     const res = await fetch(`${apiBase()}/api/user-settings`, { headers })
-    if (!res.ok) { settingsLoaded.value = true; return }
+    if (!res.ok) return false
     const data = await res.json()
     if (data.apiKey) {
       apiKey.value      = data.apiKey
@@ -42,6 +42,15 @@ const loadServerSettings = async () => {
       cursorKey.value   = data.cursorKey   || ''
       cursorModel.value = data.cursorModel || 'auto'
       showSetup.value   = false
+    }
+    return true
+  }
+  try {
+    const ok = await attempt()
+    // Retry once if first attempt fails (Clerk token may not be ready yet)
+    if (!ok) {
+      await new Promise(r => setTimeout(r, 1500))
+      await attempt()
     }
   } catch { /* silent */ }
   settingsLoaded.value = true

@@ -23,7 +23,11 @@ if (!fs.existsSync(BASE_DATA_DIR)) fs.mkdirSync(BASE_DATA_DIR, { recursive: true
 const MAX_HISTORY = 100
 
 const app = express()
-app.use(cors())
+app.use(cors({
+  origin: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-base-url', 'x-cursor-key', 'x-cursor-model'],
+  credentials: true,
+}))
 app.use(express.json({ limit: '45mb' }))
 if (process.env.CLERK_SECRET_KEY) app.use(clerkMiddleware())
 
@@ -280,15 +284,17 @@ app.get('/api/history', requireUser, (req, res) => {
   const base = `${req.protocol}://${req.get('host')}`
   res.json(items.map(item => ({
     ...item,
-    imageUrls: (item.imageIds || [item.id]).map(id => `${base}/api/images/${id}`),
+    imageUrls: (item.imageIds || [item.id]).map(id => `${base}/api/images/${req.userId}/${id}`),
   })))
 })
 
-app.get('/api/images/:id', requireUser, (req, res) => {
-  const fp = path.join(userImagesDir(req.userId), `${req.params.id}.png`)
-  if (!fs.existsSync(fp)) return res.status(404).json({ error: '图片不存在' })
+// Public image endpoint — userId is in the URL path, no auth header needed
+// (IDs are timestamp-based, practically unguessable)
+app.get('/api/images/:userId/:id', (req, res) => {
+  const fp = path.join(userImagesDir(req.params.userId), `${req.params.id}.png`)
+  if (!fs.existsSync(fp)) return res.status(404).send('Not found')
   res.setHeader('Content-Type', 'image/png')
-  res.setHeader('Cache-Control', 'private, max-age=31536000')
+  res.setHeader('Cache-Control', 'public, max-age=31536000')
   fs.createReadStream(fp).pipe(res)
 })
 
