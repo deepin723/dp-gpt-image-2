@@ -52,10 +52,14 @@ const userDisplay = computed(() => {
 const handleSignOut = () => clerk.value?.signOut()
 
 // ── Token helper ──────────────────────────────────────────────
+// Stable wrapper — always calls the latest getToken.value, never a stale snapshot
+const getTokenFn = clerkEnabled
+  ? () => getToken.value?.() ?? null
+  : undefined
+
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
   if (clerkEnabled) {
-    // getToken is ComputedRef<GetToken> — must call .value() in script context
     try { const t = await getToken.value?.(); if (t) h['Authorization'] = `Bearer ${t}` } catch {}
   }
   return h
@@ -96,13 +100,16 @@ const saveServerSettings = async (payload: { apiKey: string; baseUrl: string; cu
 }
 
 if (clerkEnabled) {
+  let loadedOnce = false
   watch(isSignedIn, async (signed) => {
-    // Skip while Clerk is still initializing (undefined state)
     if (signed === undefined || signed === null) return
     if (signed) {
+      if (loadedOnce) return  // prevent duplicate calls on token refresh
+      loadedOnce = true
       await loadServerSettings()
     } else {
-      settingsLoaded.value = true  // not signed in, mark as resolved
+      loadedOnce = false
+      settingsLoaded.value = true
     }
   }, { immediate: true })
 }
@@ -165,7 +172,7 @@ const onSwitchPage   = (page: string) => { activePage.value = page as 'image' | 
         :api-key="apiKey"
         :base-url="baseUrl"
         :active-page="activePage"
-        :get-token="clerkEnabled ? getToken : undefined"
+        :get-token="getTokenFn"
         :user-display="userDisplay"
         @settings="onOpenSettings"
         @switch-page="onSwitchPage"

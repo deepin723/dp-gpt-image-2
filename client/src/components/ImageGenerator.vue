@@ -275,7 +275,10 @@ const processNext = async () => {
       task.progress = 100
       await new Promise(r => setTimeout(r, 400))
       task.status = 'done'
+      // Add to local history immediately (base64 for instant display)
       history.value.unshift({ id: task.id, prompt: task.prompt, imageUrls: task.imageUrls, ts: task.ts })
+      // Refresh from server to get persistent image URLs (replaces base64)
+      if (props.getToken) loadServerHistory()
     } else if (data.imageBase64) {
       // Backward compat: legacy single-image response
       task.imageUrls = [`data:image/png;base64,${data.imageBase64}`]
