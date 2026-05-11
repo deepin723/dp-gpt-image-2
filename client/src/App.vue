@@ -165,7 +165,7 @@ const onSwitchPage   = (page: string) => { activePage.value = page as 'image' | 
         :api-key="apiKey"
         :base-url="baseUrl"
         :active-page="activePage"
-        :get-token="clerkEnabled ? getToken.value : undefined"
+        :get-token="clerkEnabled ? getToken : undefined"
         :user-display="userDisplay"
         @settings="onOpenSettings"
         @switch-page="onSwitchPage"
