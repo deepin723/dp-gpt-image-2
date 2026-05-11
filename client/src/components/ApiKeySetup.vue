@@ -59,7 +59,7 @@ const onSave = () => {
       <div class="rule" />
 
       <h2 class="form-title">配置 API Key</h2>
-      <p class="form-desc">填入你自己的 API Key，图片/PPT 将走你自己的账户额度。<br/>Key 只存储在本地浏览器，不会上传至任何服务器。</p>
+      <p class="form-desc">填入你自己的 API Key，图片/PPT 将走你自己的账户额度。<br/>登录状态下，Key 与账号绑定保存，换设备登录自动生效。</p>
 
       <div class="field">
         <label>API Key</label>
