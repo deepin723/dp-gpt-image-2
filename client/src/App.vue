@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useAuth, useUser, SignIn } from '@clerk/vue'
+import { ref, computed, watch } from 'vue'
+import { useAuth, useUser, useClerk, SignIn } from '@clerk/vue'
 import ApiKeySetup from './components/ApiKeySetup.vue'
 import ImageGenerator from './components/ImageGenerator.vue'
 import PptTool from './components/PptTool.vue'
@@ -18,10 +18,39 @@ const settingsLoaded = ref(!clerkEnabled)
 
 const apiBase = () => import.meta.env.VITE_API_BASE || 'https://dp-gpt-image-2-production.up.railway.app'
 
-// ── Clerk auth (composables safe to call even when Clerk not configured) ──
+// ── Clerk composables ─────────────────────────────────────────
 const { isSignedIn, getToken } = useAuth()
 const { user } = useUser()
+const { signOut } = useClerk()
 
+// Clerk initialization state: undefined = still loading, true/false = known
+const clerkReady = computed(() => isSignedIn.value !== undefined)
+
+// ── Auth state machine ────────────────────────────────────────
+// 'loading'        → Clerk not yet initialized, or settings fetch in progress
+// 'unauthenticated'→ Clerk loaded, not signed in
+// 'ready'          → app can show (clerk disabled, or signed in + settings loaded)
+const authState = computed<'loading' | 'unauthenticated' | 'ready'>(() => {
+  if (!clerkEnabled) return 'ready'
+  if (!clerkReady.value) return 'loading'           // undefined: Clerk still booting
+  if (isSignedIn.value === false) return 'unauthenticated'
+  if (isSignedIn.value === true && !settingsLoaded.value) return 'loading'
+  return 'ready'
+})
+
+// ── User display info ─────────────────────────────────────────
+const userDisplay = computed(() => {
+  if (!clerkEnabled || !user.value) return null
+  return {
+    name:   user.value.fullName || user.value.primaryEmailAddress?.emailAddress || '用户',
+    email:  user.value.primaryEmailAddress?.emailAddress || '',
+    avatar: user.value.imageUrl || '',
+  }
+})
+
+const handleSignOut = () => signOut()
+
+// ── Token helper ──────────────────────────────────────────────
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
   if (clerkEnabled) {
@@ -30,6 +59,7 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
   return h
 }
 
+// ── Server settings sync ──────────────────────────────────────
 const loadServerSettings = async () => {
   const attempt = async () => {
     const headers = await getAuthHeaders()
@@ -47,7 +77,6 @@ const loadServerSettings = async () => {
   }
   try {
     const ok = await attempt()
-    // Retry once if first attempt fails (Clerk token may not be ready yet)
     if (!ok) {
       await new Promise(r => setTimeout(r, 1500))
       await attempt()
@@ -60,16 +89,19 @@ const saveServerSettings = async (payload: { apiKey: string; baseUrl: string; cu
   if (!clerkEnabled || !isSignedIn.value) return
   try {
     const headers = await getAuthHeaders()
-    await fetch(`${apiBase()}/api/user-settings`, {
-      method: 'PUT', headers, body: JSON.stringify(payload),
-    })
+    await fetch(`${apiBase()}/api/user-settings`, { method: 'PUT', headers, body: JSON.stringify(payload) })
   } catch { /* silent */ }
 }
 
 if (clerkEnabled) {
   watch(isSignedIn, async (signed) => {
-    if (signed) await loadServerSettings()
-    else settingsLoaded.value = true
+    // Skip while Clerk is still initializing (undefined state)
+    if (signed === undefined || signed === null) return
+    if (signed) {
+      await loadServerSettings()
+    } else {
+      settingsLoaded.value = true  // not signed in, mark as resolved
+    }
   }, { immediate: true })
 }
 
@@ -92,8 +124,31 @@ const onSwitchPage   = (page: string) => { activePage.value = page as 'image' | 
 </script>
 
 <template>
-  <!-- Not configured with Clerk, or Clerk loaded and signed in -->
-  <template v-if="!clerkEnabled || (clerkEnabled && settingsLoaded && isSignedIn)">
+  <!-- Loading: Clerk booting or settings fetching -->
+  <div v-if="authState === 'loading'" class="loading-screen">
+    <div class="loading-spinner" />
+  </div>
+
+  <!-- Not signed in: show login -->
+  <div v-else-if="authState === 'unauthenticated'" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <svg viewBox="0 0 36 36" fill="none" width="40" height="40">
+          <rect width="36" height="36" rx="9" fill="#2A1A0C"/>
+          <text x="8" y="26" font-size="20" font-weight="700" fill="#EAD9C0" font-family="serif">D</text>
+          <rect x="8" y="28" width="20" height="1.5" rx="1" fill="#C4813A" opacity="0.7"/>
+        </svg>
+        <div>
+          <h1 class="auth-title">Deepin Image</h1>
+          <p class="auth-sub">AI 图像 & PPT 平台</p>
+        </div>
+      </div>
+      <SignIn />
+    </div>
+  </div>
+
+  <!-- Ready -->
+  <template v-else>
     <ApiKeySetup
       v-if="showSetup"
       :initial-key="apiKey"
@@ -109,8 +164,10 @@ const onSwitchPage   = (page: string) => { activePage.value = page as 'image' | 
         :base-url="baseUrl"
         :active-page="activePage"
         :get-token="clerkEnabled ? getToken : undefined"
+        :user-display="userDisplay"
         @settings="onOpenSettings"
         @switch-page="onSwitchPage"
+        @sign-out="handleSignOut"
       />
       <PptTool
         v-else-if="activePage === 'ppt'"
@@ -123,33 +180,6 @@ const onSwitchPage   = (page: string) => { activePage.value = page as 'image' | 
         @settings="onOpenSettings"
       />
     </template>
-  </template>
-
-  <!-- Clerk configured, loading -->
-  <template v-else-if="clerkEnabled && !settingsLoaded">
-    <div class="loading-screen">
-      <div class="loading-spinner" />
-    </div>
-  </template>
-
-  <!-- Clerk configured, not signed in -->
-  <template v-else-if="clerkEnabled && isSignedIn === false">
-    <div class="auth-screen">
-      <div class="auth-card">
-        <div class="auth-brand">
-          <svg viewBox="0 0 36 36" fill="none" width="40" height="40">
-            <rect width="36" height="36" rx="9" fill="#2A1A0C"/>
-            <text x="8" y="26" font-size="20" font-weight="700" fill="#EAD9C0" font-family="serif">D</text>
-            <rect x="8" y="28" width="20" height="1.5" rx="1" fill="#C4813A" opacity="0.7"/>
-          </svg>
-          <div>
-            <h1 class="auth-title">Deepin Image</h1>
-            <p class="auth-sub">AI 图像 & PPT 平台</p>
-          </div>
-        </div>
-        <SignIn />
-      </div>
-    </div>
   </template>
 </template>
 

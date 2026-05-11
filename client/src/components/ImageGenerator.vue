@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 
-const props = defineProps<{ apiKey: string; baseUrl: string; activePage?: string; getToken?: () => Promise<string | null> }>()
-const emit = defineEmits<{ settings: []; 'switch-page': [page: string] }>()
+const props = defineProps<{
+  apiKey: string
+  baseUrl: string
+  activePage?: string
+  getToken?: () => Promise<string | null>
+  userDisplay?: { name: string; email: string; avatar: string } | null
+}>()
+const emit = defineEmits<{ settings: []; 'switch-page': [page: string]; 'sign-out': [] }>()
 
 // ── Types ─────────────────────────────────────────────────────
 interface RefImage {
@@ -409,6 +415,17 @@ onUnmounted(() => {
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
+        <!-- User badge + sign out (only when logged in via Clerk) -->
+        <div v-if="props.userDisplay" class="user-badge" :title="props.userDisplay.email">
+          <img v-if="props.userDisplay.avatar" :src="props.userDisplay.avatar" class="user-avatar" alt="" />
+          <span v-else class="user-avatar user-avatar-fallback">{{ props.userDisplay.name[0] }}</span>
+          <span class="user-name">{{ props.userDisplay.name }}</span>
+          <button class="btn-signout" @click="emit('sign-out')" title="退出登录">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" width="13" height="13">
+              <path d="M13 4l4 4-4 4M17 8H8"/><path d="M8 3H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h4"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -1091,4 +1108,32 @@ textarea::placeholder { color: var(--text-3); }
 
 .lightbox-enter-active, .lightbox-leave-active { transition: opacity 0.2s; }
 .lightbox-enter-from, .lightbox-leave-to { opacity: 0; }
+
+/* ── User badge ── */
+.user-badge {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--border); border-radius: 99px;
+  background: rgba(196,129,58,0.05); cursor: default;
+}
+.user-avatar {
+  width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
+  border: 1px solid rgba(196,129,58,0.3); flex-shrink: 0;
+}
+.user-avatar-fallback {
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(196,129,58,0.2); color: var(--accent);
+  font-size: 12px; font-weight: 700;
+}
+.user-name {
+  font-size: 12px; color: var(--text-2); max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.btn-signout {
+  display: flex; align-items: center; padding: 3px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-3); border-radius: 4px;
+  transition: color 0.2s;
+}
+.btn-signout:hover { color: #E07050; }
 </style>
