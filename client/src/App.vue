@@ -21,7 +21,8 @@ const apiBase = () => import.meta.env.VITE_API_BASE || 'https://dp-gpt-image-2-p
 // ── Clerk composables ─────────────────────────────────────────
 const { isSignedIn, getToken } = useAuth()
 const { user } = useUser()
-const { signOut } = useClerk()
+// useClerk() returns ShallowRef<Clerk | null> — access via clerk.value
+const clerk = useClerk()
 
 // Clerk initialization state: undefined = still loading, true/false = known
 const clerkReady = computed(() => isSignedIn.value !== undefined)
@@ -48,13 +49,14 @@ const userDisplay = computed(() => {
   }
 })
 
-const handleSignOut = () => signOut()
+const handleSignOut = () => clerk.value?.signOut()
 
 // ── Token helper ──────────────────────────────────────────────
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
   if (clerkEnabled) {
-    try { const t = await getToken(); if (t) h['Authorization'] = `Bearer ${t}` } catch {}
+    // getToken is ComputedRef<GetToken> — must call .value() in script context
+    try { const t = await getToken.value?.(); if (t) h['Authorization'] = `Bearer ${t}` } catch {}
   }
   return h
 }
@@ -163,7 +165,7 @@ const onSwitchPage   = (page: string) => { activePage.value = page as 'image' | 
         :api-key="apiKey"
         :base-url="baseUrl"
         :active-page="activePage"
-        :get-token="clerkEnabled ? getToken : undefined"
+        :get-token="clerkEnabled ? getToken.value : undefined"
         :user-display="userDisplay"
         @settings="onOpenSettings"
         @switch-page="onSwitchPage"
