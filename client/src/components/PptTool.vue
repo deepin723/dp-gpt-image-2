@@ -37,6 +37,7 @@ const editInstruction   = ref('')
 const isGenerating      = ref(false)
 const isEditing         = ref(false)
 const isExporting       = ref(false)
+const exportWithImages  = ref(true)
 const errorMsg          = ref('')
 
 // Reference PPT upload
@@ -149,6 +150,7 @@ const exportPPT = async () => {
       body: JSON.stringify({
         ...doc.value,
         referencePptBase64: refPptBase64.value || undefined,
+        withImages: exportWithImages.value,
       }),
     })
     if (!resp.ok) {
@@ -327,12 +329,22 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
           </button>
           <span v-if="usingCursor" class="cursor-badge">Cursor</span>
           <span class="slide-count">{{ doc.slides.length }} 页</span>
+          <!-- AI 配图开关 -->
+          <label class="img-toggle" :class="{ active: exportWithImages }" title="为每张幻灯片自动生成 AI 配图（需要 API key 有图片生成权限）">
+            <input type="checkbox" v-model="exportWithImages" style="display:none" />
+            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" width="12" height="12">
+              <rect x="1" y="3" width="12" height="9" rx="1.5"/>
+              <circle cx="5" cy="7.5" r="1.5"/>
+              <path d="M9 5.5l1.5 2L12 5.5"/>
+            </svg>
+            AI 配图
+          </label>
           <button class="btn-export" :disabled="isExporting" @click="exportPPT">
             <span v-if="isExporting" class="spinner spinner-sm" />
             <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
               <path d="M3 12h10M8 2v8M5 7l3 3 3-3"/>
             </svg>
-            {{ isExporting ? '生成中...' : '导出 PPTX' }}
+            {{ isExporting ? (exportWithImages ? 'AI 配图中，请稍候…' : '生成中…') : '导出 PPTX' }}
           </button>
         </div>
       </div>
@@ -882,6 +894,24 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
   text-align: center;
   flex-shrink: 0;
 }
+
+/* ── AI 配图开关 ── */
+.img-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-3);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+.img-toggle:hover { border-color: rgba(196,129,58,0.3); color: var(--text-2); }
+.img-toggle.active { border-color: rgba(196,129,58,0.5); color: var(--accent-lt); background: rgba(196,129,58,0.08); }
 
 /* ── Cursor badge ── */
 .cursor-badge {

@@ -462,9 +462,13 @@ app.post('/api/ppt/edit-slide', async (req, res) => {
 })
 
 app.post('/api/ppt/export', async (req, res) => {
-  const { title, subtitle, slides, referencePptBase64 } = req.body
+  const { title, subtitle, slides, referencePptBase64, withImages = true } = req.body
+  const apiKey  = req.headers['x-api-key']
+  const baseUrl = (req.headers['x-base-url'] || 'https://bobdong.cn/v1').replace(/\/$/, '')
+
   if (!slides?.length) return res.status(400).json({ error: '无幻灯片数据' })
 
+  // ── Extract reference PPT images (fallback pool) ──────────────────────────
   let refImages = []
   if (referencePptBase64) {
     try {
@@ -474,6 +478,24 @@ app.post('/api/ppt/export', async (req, res) => {
     } catch (e) { console.warn('[ppt/export] reference image extraction failed:', e.message) }
   }
 
+  // ── Generate per-slide images via gpt-image-2 (parallel) ─────────────────
+  let slideImages = new Array(slides.length).fill(null)
+  if (apiKey && withImages) {
+    console.log(`[ppt/export] generating AI images for ${slides.length} slides`)
+    const results = await Promise.allSettled(
+      slides.map((slide, i) => {
+        const kw = slide.keywords?.trim()
+        if (!kw) return Promise.resolve(null)
+        const prompt = `Professional presentation slide visual, ${kw}. No text, no letters, clean modern composition, high quality photography or digital art, business presentation style.`
+        return generateOne(prompt, '1024x1024', apiKey, baseUrl)
+          .then(b64 => { console.log(`[ppt/export] slide ${i + 1} image ok`); return { base64: b64, mime: 'image/png' } })
+          .catch(err => { console.warn(`[ppt/export] slide ${i + 1} image failed:`, err.message); return null })
+      })
+    )
+    slideImages = results.map(r => (r.status === 'fulfilled' ? r.value : null))
+  }
+
+  // ── Build PPTX ────────────────────────────────────────────────────────────
   try {
     const prs = new pptxgen()
     prs.layout = 'LAYOUT_WIDE'
@@ -492,11 +514,12 @@ app.post('/api/ppt/export', async (req, res) => {
       s.background = { color: '1C1510' }
       s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: 0.07, h: 5.63, fill: { color: c }, line: { transparency: 100 } })
 
-      const refImg = refImages.length > 0 ? refImages[i % refImages.length] : null
-      const textW  = refImg ? 5.55 : 9.5
+      // Priority: AI-generated per-slide image > reference PPT image > text-only
+      const img   = slideImages[i] || (refImages.length > 0 ? refImages[i % refImages.length] : null)
+      const textW = img ? 5.55 : 9.5
 
-      if (refImg) {
-        s.addImage({ data: `data:${refImg.mime};base64,${refImg.base64}`, x: 5.9, y: 0.0, w: 4.1, h: 5.63 })
+      if (img) {
+        s.addImage({ data: `data:${img.mime};base64,${img.base64}`, x: 5.9, y: 0.0, w: 4.1, h: 5.63 })
         s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: '000000', transparency: 35 }, line: { transparency: 100 } })
         s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: c, transparency: 85 }, line: { transparency: 100 } })
       } else {
