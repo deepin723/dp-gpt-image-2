@@ -19,6 +19,7 @@ interface Slide {
   title: string
   bullets: string[]
   keywords?: string
+  imagePrompt?: string
 }
 interface PptDoc {
   title: string

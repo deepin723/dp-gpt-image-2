@@ -349,16 +349,30 @@ async function extractPptxContent(base64) {
   return { slides, images: images.slice(0, 10) }
 }
 
-const PPT_GEN_SYSTEM = `You are a presentation outline designer. Return ONLY valid JSON (no markdown fences):
+const PPT_GEN_SYSTEM = `You are a presentation slide designer. Return ONLY valid JSON (no markdown fences):
 {
   "title": "presentation title",
   "subtitle": "one-line tagline",
   "cover_keywords": "3 English keywords for cover image",
   "slides": [
-    { "title": "slide title", "bullets": ["point 1", "point 2", "point 3"], "keywords": "2-3 English keywords" }
+    {
+      "title": "slide title",
+      "bullets": ["point 1", "point 2", "point 3"],
+      "keywords": "2-3 English keywords",
+      "imagePrompt": "Complete English prompt for gpt-image-2 to render this slide as a full visual"
+    }
   ]
 }
-Rules: 6-10 slides, 3-5 concise bullets each (10-25 words), same language as input, keywords must be English only.`
+
+imagePrompt rules (write in English, describe the ENTIRE slide as one image):
+- Start with: "A 16:9 widescreen business presentation slide,"
+- Specify: dark brown/charcoal background, warm amber-orange accent colors
+- Include the slide title text verbatim (even if non-English), displayed prominently at top-left in orange
+- Include each bullet point verbatim as readable text in the slide body
+- Add a relevant illustration, chart, icon or scene on the right 30% that reinforces the slide topic
+- End with: "clean modern typography, professional corporate design"
+
+General rules: 6-10 slides, 3-5 concise bullets each (10-25 words), title/bullets in same language as input.`
 
 const PPT_EDIT_SYSTEM = `You are editing one slide. Return ONLY the updated slide as valid JSON (no markdown):
 { "title": "...", "bullets": ["..."] }
@@ -417,15 +431,15 @@ app.post('/api/ppt/slide-images', attachUser, async (req, res) => {
   const baseUrl = (req.headers['x-base-url'] || 'https://bobdong.cn/v1').replace(/\/$/, '')
   const { slides } = req.body
 
-  if (!apiKey)       return res.status(401).json({ error: '请先配置 API Key' })
+  if (!apiKey)         return res.status(401).json({ error: '请先配置 API Key' })
   if (!slides?.length) return res.status(400).json({ error: '无幻灯片数据' })
 
   const results = await Promise.allSettled(
     slides.map((slide, i) => {
-      const kw = slide.keywords?.trim()
-      if (!kw) return Promise.resolve(null)
-      const prompt = `Professional presentation slide visual, ${kw}. No text, no letters, clean modern composition, high quality photography or digital art, business presentation style.`
-      return generateOne(prompt, '1024x1024', apiKey, baseUrl)
+      // Use the LLM-generated full-slide imagePrompt; fall back to keywords only if missing
+      const prompt = slide.imagePrompt?.trim()
+        || `A 16:9 widescreen business presentation slide, topic: ${slide.keywords}. Dark background, amber-orange accents, clean modern typography, professional corporate design.`
+      return generateOne(prompt, '1536x1024', apiKey, baseUrl)
         .then(b64 => { console.log(`[ppt/slide-images] slide ${i + 1} ok`); return b64 })
         .catch(err => { console.warn(`[ppt/slide-images] slide ${i + 1} failed:`, err.message); return null })
     })
@@ -517,30 +531,35 @@ app.post('/api/ppt/export', async (req, res) => {
       const sd = slides[i]
       const c  = accents[i % accents.length]
       const s  = prs.addSlide()
-      s.background = { color: '1C1510' }
-      s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: 0.07, h: 5.63, fill: { color: c }, line: { transparency: 100 } })
 
-      // Priority: pre-generated AI image > reference PPT image > text-only
       const preGenB64 = slideImagesData?.[i]
-      const img = preGenB64
-        ? { base64: preGenB64, mime: 'image/png' }
-        : (refImages.length > 0 ? refImages[i % refImages.length] : null)
-      const textW = img ? 5.55 : 9.5
 
-      if (img) {
-        s.addImage({ data: `data:${img.mime};base64,${img.base64}`, x: 5.9, y: 0.0, w: 4.1, h: 5.63 })
-        s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: '000000', transparency: 35 }, line: { transparency: 100 } })
-        s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: c, transparency: 85 }, line: { transparency: 100 } })
+      if (preGenB64) {
+        // Full-slide AI-generated image — fill the entire slide, no text overlay needed
+        s.addImage({ data: `data:image/png;base64,${preGenB64}`, x: 0, y: 0, w: 10, h: 5.625 })
       } else {
-        s.addShape(prs.ShapeType.ellipse, { x: 8, y: -0.8, w: 3, h: 3, fill: { color: c, transparency: 90 }, line: { transparency: 100 } })
-      }
+        // Fallback: text-only layout with optional reference PPT image on the right
+        s.background = { color: '1C1510' }
+        s.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: 0.07, h: 5.63, fill: { color: c }, line: { transparency: 100 } })
 
-      s.addText(sd.title || '', { x: 0.25, y: 0.2, w: textW, h: 0.8, fontSize: 22, bold: true, color: 'E8A86A', wrap: true })
-      s.addShape(prs.ShapeType.line, { x: 0.25, y: 1.08, w: textW, h: 0, line: { color: c, width: 0.75 } })
-      if (sd.bullets?.length) {
-        s.addText(sd.bullets.map(b => `  •  ${b}`).join('\n'), { x: 0.25, y: 1.25, w: textW, h: 4.1, fontSize: 15, color: 'C8B89A', lineSpacingMultiple: 1.6, valign: 'top', wrap: true })
+        const refImg = refImages.length > 0 ? refImages[i % refImages.length] : null
+        const textW  = refImg ? 5.55 : 9.5
+
+        if (refImg) {
+          s.addImage({ data: `data:${refImg.mime};base64,${refImg.base64}`, x: 5.9, y: 0.0, w: 4.1, h: 5.63 })
+          s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: '000000', transparency: 35 }, line: { transparency: 100 } })
+          s.addShape(prs.ShapeType.rect, { x: 5.9, y: 0.0, w: 4.1, h: 5.63, fill: { color: c, transparency: 85 }, line: { transparency: 100 } })
+        } else {
+          s.addShape(prs.ShapeType.ellipse, { x: 8, y: -0.8, w: 3, h: 3, fill: { color: c, transparency: 90 }, line: { transparency: 100 } })
+        }
+
+        s.addText(sd.title || '', { x: 0.25, y: 0.2, w: textW, h: 0.8, fontSize: 22, bold: true, color: 'E8A86A', wrap: true })
+        s.addShape(prs.ShapeType.line, { x: 0.25, y: 1.08, w: textW, h: 0, line: { color: c, width: 0.75 } })
+        if (sd.bullets?.length) {
+          s.addText(sd.bullets.map(b => `  •  ${b}`).join('\n'), { x: 0.25, y: 1.25, w: textW, h: 4.1, fontSize: 15, color: 'C8B89A', lineSpacingMultiple: 1.6, valign: 'top', wrap: true })
+        }
+        s.addText(`${i + 1} / ${slides.length}`, { x: 4.5, y: 5.2, w: 1.2, h: 0.3, fontSize: 10, color: '4A3525', align: 'right' })
       }
-      s.addText(`${i + 1} / ${slides.length}`, { x: 4.5, y: 5.2, w: 1.2, h: 0.3, fontSize: 10, color: '4A3525', align: 'right' })
     }
 
     const buffer = await prs.write('nodebuffer')
