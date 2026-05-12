@@ -28,17 +28,22 @@ interface PptDoc {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
-const phase     = ref<'input' | 'preview'>('input')
-const topic     = ref('')
-const outline   = ref('')
-const doc       = ref<PptDoc | null>(null)
-const selectedIdx       = ref<number | null>(null)
-const editInstruction   = ref('')
-const isGenerating      = ref(false)
-const isEditing         = ref(false)
-const isExporting       = ref(false)
-const exportWithImages  = ref(true)
-const errorMsg          = ref('')
+const phase              = ref<'input' | 'preview'>('input')
+const topic              = ref('')
+const outline            = ref('')
+const doc                = ref<PptDoc | null>(null)
+const selectedIdx        = ref<number | null>(null)
+const editInstruction    = ref('')
+const isGenerating       = ref(false)
+const isEditing          = ref(false)
+const isExporting        = ref(false)
+const errorMsg           = ref('')
+
+// AI 配图
+const withImages         = ref(true)
+const slideImages        = ref<(string | null)[]>([])   // base64 per slide
+const slideImgLoading    = ref<boolean[]>([])
+const isGeneratingImages = ref(false)
 
 // Reference PPT upload
 const refPptName   = ref('')
@@ -60,7 +65,7 @@ const onRefPptChange = (e: Event) => {
   const reader = new FileReader()
   reader.onload = (ev) => {
     const dataUrl = ev.target?.result as string
-    refPptBase64.value = dataUrl.split(',')[1] // strip "data:...;base64,"
+    refPptBase64.value = dataUrl.split(',')[1]
   }
   reader.readAsDataURL(file)
 }
@@ -91,6 +96,57 @@ const pptHeaders = () => ({
 
 const usingCursor = computed(() => !!props.cursorKey)
 
+const imgDoneCount = computed(() => slideImages.value.filter(Boolean).length)
+const imgTotal     = computed(() => slideImages.value.length)
+
+// ── Image generation ───────────────────────────────────────────────────────
+
+// Generate all slide images in parallel; each updates independently as it resolves
+const generateAllImages = async (slides: Slide[]) => {
+  if (!props.apiKey) return
+  isGeneratingImages.value = true
+  slideImages.value    = slides.map(() => null)
+  slideImgLoading.value = slides.map(() => true)
+
+  await Promise.all(
+    slides.map((slide, i) =>
+      fetch('/api/ppt/slide-images', {
+        method: 'POST',
+        headers: pptHeaders(),
+        body: JSON.stringify({ slides: [slide] }),
+      })
+        .then(r => r.json())
+        .then(data => { if (data.images?.[0]) slideImages.value[i] = data.images[0] })
+        .catch(() => {})
+        .finally(() => { slideImgLoading.value[i] = false })
+    )
+  )
+
+  isGeneratingImages.value = false
+}
+
+const regenerateSlideImage = async (idx: number) => {
+  if (!doc.value || slideImgLoading.value[idx] || !props.apiKey) return
+  slideImgLoading.value[idx] = true
+  slideImages.value[idx] = null
+  try {
+    const resp = await fetch('/api/ppt/slide-images', {
+      method: 'POST',
+      headers: pptHeaders(),
+      body: JSON.stringify({ slides: [doc.value.slides[idx]] }),
+    })
+    const data = await resp.json()
+    if (data.images?.[0]) slideImages.value[idx] = data.images[0]
+    else showToast('配图失败，可重试', 'error')
+  } catch {
+    showToast('配图失败，请重试', 'error')
+  } finally {
+    slideImgLoading.value[idx] = false
+  }
+}
+
+const removeSlideImage = (idx: number) => { slideImages.value[idx] = null }
+
 // ── Actions ────────────────────────────────────────────────────────────────
 const generate = async () => {
   if (!topic.value.trim()) { errorMsg.value = '请输入 PPT 主题'; return }
@@ -112,6 +168,13 @@ const generate = async () => {
     selectedIdx.value = null
     phase.value = 'preview'
     showToast(`已生成 ${data.slides?.length || 0} 张幻灯片`)
+    // Launch image generation in background if enabled
+    if (withImages.value && props.apiKey) {
+      generateAllImages(data.slides)
+    } else {
+      slideImages.value     = (data.slides || []).map(() => null)
+      slideImgLoading.value = (data.slides || []).map(() => false)
+    }
   } catch (err: unknown) {
     showToast(err instanceof Error ? err.message : '生成失败，请重试', 'error')
   } finally {
@@ -150,7 +213,7 @@ const exportPPT = async () => {
       body: JSON.stringify({
         ...doc.value,
         referencePptBase64: refPptBase64.value || undefined,
-        withImages: exportWithImages.value,
+        slideImagesData: slideImages.value,   // pass pre-generated images, no generation in export
       }),
     })
     if (!resp.ok) {
@@ -183,7 +246,7 @@ const selectSlide = (idx: number) => {
   editInstruction.value = ''
 }
 
-// Accent colors for slides (matching pptx export)
+// Accent colors for slides
 const SLIDE_ACCENTS = ['#C4813A', '#8B5530', '#E8A86A', '#6B3F1E', '#A0601A']
 const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
 </script>
@@ -194,7 +257,6 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
     <!-- INPUT PHASE ─────────────────────────────────────────── -->
     <div v-if="phase === 'input'" class="input-wrap">
       <div class="input-card">
-        <!-- Unified page header (same pattern as ImageGenerator) -->
         <div class="ppt-page-header">
           <div class="ppt-brand">
             <svg viewBox="0 0 36 36" fill="none" width="32" height="32">
@@ -255,7 +317,6 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
           />
         </div>
 
-        <!-- Reference PPT upload -->
         <div class="field">
           <label>参考 PPT <em>（可选，上传后 AI 会借鉴其内容、结构或风格）</em></label>
           <input
@@ -283,18 +344,25 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
           </button>
         </div>
 
+        <!-- AI 智能配图 toggle -->
+        <div class="field-toggle-row">
+          <label class="toggle-row-label" @click="withImages = !withImages">
+            <div class="toggle-pill" :class="{ on: withImages }">
+              <div class="toggle-dot" />
+            </div>
+            <span class="toggle-text">AI 智能配图</span>
+            <em>（生成时为每页自动配图，可在预览中修改或删除）</em>
+          </label>
+        </div>
+
         <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
 
-        <button
-          class="btn-generate"
-          :disabled="isGenerating"
-          @click="generate"
-        >
+        <button class="btn-generate" :disabled="isGenerating" @click="generate">
           <span v-if="isGenerating" class="spinner" />
           <svg v-else viewBox="0 0 16 16" fill="currentColor" width="15" height="15">
             <path d="M8 1l1.5 4L14 7l-4.5 1.5L8 13l-1.5-4.5L2 7l4.5-1.5z"/>
           </svg>
-          {{ isGenerating ? 'AI 生成中，请稍候...' : refPptName ? '借鉴参考内容生成 PPT' : '一键生成 PPT' }}
+          {{ isGenerating ? 'AI 生成中，请稍候...' : withImages ? '生成 PPT + AI 配图' : (refPptName ? '借鉴参考内容生成 PPT' : '一键生成 PPT') }}
         </button>
       </div>
     </div>
@@ -328,23 +396,18 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
             重新生成
           </button>
           <span v-if="usingCursor" class="cursor-badge">Cursor</span>
+          <!-- 配图生成进度 -->
+          <span v-if="isGeneratingImages" class="img-gen-pill">
+            <span class="spinner spinner-sm" />
+            配图中 {{ imgDoneCount }}/{{ imgTotal }}
+          </span>
           <span class="slide-count">{{ doc.slides.length }} 页</span>
-          <!-- AI 配图开关 -->
-          <label class="img-toggle" :class="{ active: exportWithImages }" title="为每张幻灯片自动生成 AI 配图（需要 API key 有图片生成权限）">
-            <input type="checkbox" v-model="exportWithImages" style="display:none" />
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" width="12" height="12">
-              <rect x="1" y="3" width="12" height="9" rx="1.5"/>
-              <circle cx="5" cy="7.5" r="1.5"/>
-              <path d="M9 5.5l1.5 2L12 5.5"/>
-            </svg>
-            AI 配图
-          </label>
           <button class="btn-export" :disabled="isExporting" @click="exportPPT">
             <span v-if="isExporting" class="spinner spinner-sm" />
             <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
               <path d="M3 12h10M8 2v8M5 7l3 3 3-3"/>
             </svg>
-            {{ isExporting ? (exportWithImages ? 'AI 配图中，请稍候…' : '生成中…') : '导出 PPTX' }}
+            {{ isExporting ? '导出中...' : '导出 PPTX' }}
           </button>
         </div>
       </div>
@@ -371,11 +434,21 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
         >
           <div class="slide-inner">
             <div class="slide-accent-bar" />
-            <div class="slide-title">{{ slide.title }}</div>
-            <div class="slide-divider" />
-            <ul class="slide-bullets">
-              <li v-for="(b, j) in slide.bullets" :key="j" class="slide-bullet">{{ b }}</li>
-            </ul>
+            <!-- Image side panel -->
+            <div v-if="slideImages[i] || slideImgLoading[i]" class="slide-img-side">
+              <div v-if="slideImgLoading[i]" class="slide-img-spin">
+                <div class="task-mini-spin" />
+              </div>
+              <img v-else :src="`data:image/png;base64,${slideImages[i]}`" class="slide-img-preview" alt="" />
+            </div>
+            <!-- Text area (narrows when image present) -->
+            <div class="slide-text" :class="{ compact: !!(slideImages[i] || slideImgLoading[i]) }">
+              <div class="slide-title">{{ slide.title }}</div>
+              <div class="slide-divider" />
+              <ul class="slide-bullets">
+                <li v-for="(b, j) in slide.bullets" :key="j" class="slide-bullet">{{ b }}</li>
+              </ul>
+            </div>
           </div>
           <div class="slide-num">{{ i + 1 }}</div>
         </div>
@@ -384,6 +457,7 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
       <!-- Edit panel (shown when a content slide is selected) -->
       <div v-if="selectedIdx !== null && selectedIdx >= 0" class="edit-panel">
         <div class="edit-panel-inner">
+          <!-- Text edit row -->
           <div class="edit-label">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" width="13" height="13">
               <path d="M9.5 1.5l3 3-8 8H1.5V9.5l8-8z"/>
@@ -407,11 +481,53 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
               {{ isEditing ? 'AI 改写中...' : 'AI 修改此页' }}
             </button>
           </div>
+
+          <!-- Image controls -->
+          <div class="img-edit-row">
+            <div class="img-edit-preview">
+              <img
+                v-if="slideImages[selectedIdx]"
+                :src="`data:image/png;base64,${slideImages[selectedIdx]}`"
+                class="img-edit-thumb"
+                alt=""
+              />
+              <div v-else-if="slideImgLoading[selectedIdx]" class="img-edit-loading">
+                <span class="spinner spinner-sm" />
+                <span>配图生成中...</span>
+              </div>
+              <div v-else class="img-edit-empty">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" width="22" height="22" opacity="0.3">
+                  <rect x="2" y="4" width="16" height="12" rx="2"/>
+                  <circle cx="7" cy="9" r="2"/>
+                  <path d="M2 14l4-4 3 3 3-3 6 6"/>
+                </svg>
+                <span>暂无配图</span>
+              </div>
+            </div>
+            <div class="img-edit-btns">
+              <button
+                class="btn-reimg"
+                :disabled="slideImgLoading[selectedIdx] || !props.apiKey"
+                @click="regenerateSlideImage(selectedIdx)"
+              >
+                <span v-if="slideImgLoading[selectedIdx]" class="spinner spinner-sm" />
+                <svg v-else viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" width="12" height="12">
+                  <path d="M1 7a6 6 0 1 0 1-3.5"/><polyline points="1,2 1,5.5 4.5,5.5"/>
+                </svg>
+                {{ slideImgLoading[selectedIdx] ? '生成中...' : slideImages[selectedIdx] ? '重新配图' : '生成配图' }}
+              </button>
+              <button
+                v-if="slideImages[selectedIdx]"
+                class="btn-delimg"
+                @click="removeSlideImage(selectedIdx)"
+              >删除配图</button>
+            </div>
+          </div>
         </div>
       </div>
 
       <div v-else-if="selectedIdx === null" class="edit-hint">
-        点击任意幻灯片可预览详情并进行 AI 精准修改
+        点击任意幻灯片可预览详情并进行 AI 精准修改 · 可单独修改配图
       </div>
     </template>
 
@@ -447,251 +563,132 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
   overflow: hidden;
 }
 
-/* ── Input page header (mirrors ImageGenerator's header) ── */
+/* ── Input page header ── */
 .ppt-page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0;
 }
-
-.ppt-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.ppt-brand-name {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: -0.2px;
-}
-
+.ppt-brand { display: flex; align-items: center; gap: 10px; }
+.ppt-brand-name { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
 .ppt-tabs {
-  display: flex;
-  gap: 2px;
-  margin-left: 14px;
-  padding: 3px;
-  background: rgba(0,0,0,0.2);
-  border-radius: 9px;
-  border: 1px solid var(--border);
+  display: flex; gap: 2px; margin-left: 14px; padding: 3px;
+  background: rgba(0,0,0,0.2); border-radius: 9px; border: 1px solid var(--border);
 }
 .ptab {
-  padding: 5px 14px;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
+  padding: 5px 14px; background: transparent; border: none; border-radius: 6px;
+  color: var(--text-2); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all 0.15s; font-family: inherit;
 }
 .ptab:hover { color: var(--text); }
 .ptab.active { background: rgba(196,129,58,0.15); color: var(--accent-lt); }
-
-.ppt-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
+.ppt-header-actions { display: flex; align-items: center; gap: 8px; }
 .btn-settings-sm {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-2);
-  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; background: transparent;
+  border: 1px solid var(--border); border-radius: 8px; color: var(--text-2); cursor: pointer;
   transition: all 0.15s;
 }
 .btn-settings-sm:hover { color: var(--text); border-color: rgba(196,129,58,0.3); }
+.input-divider { height: 1px; background: var(--border); margin: 14px 0; }
+.input-sub-header { margin-bottom: 8px; }
 
-.input-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 14px 0;
-}
-
-.input-sub-header {
-  margin-bottom: 8px;
-}
-
-/* ── Preview header updates for brand ── */
-.preview-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.preview-brand-name {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text);
-}
-.ppt-tabs-preview {
-  margin-left: 10px;
-}
-
-.btn-rewrite {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text-2);
-  font-size: 12px;
-  padding: 5px 10px;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.btn-rewrite:hover { color: var(--text); border-color: rgba(196,129,58,0.3); }
+/* ── Input card ── */
 .input-wrap {
-  flex: 1;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 32px 24px 40px;
-  overflow-y: auto;
+  flex: 1; display: flex; align-items: flex-start; justify-content: center;
+  padding: 32px 24px 40px; overflow-y: auto;
 }
-
-.input-card {
-  width: 100%;
-  max-width: 660px;
-}
-
-.input-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
+.input-card { width: 100%; max-width: 660px; }
 .input-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 18px; font-weight: 700; color: var(--text);
 }
-
-.input-desc {
-  font-size: 13px;
-  color: var(--text-2);
-  line-height: 1.65;
-  margin-bottom: 28px;
-}
+.input-desc { font-size: 13px; color: var(--text-2); line-height: 1.65; margin-bottom: 28px; }
 
 .field { margin-bottom: 18px; }
 .field label {
-  display: block;
-  font-size: 12px;
-  color: var(--text-2);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+  display: block; font-size: 12px; color: var(--text-2); margin-bottom: 6px;
+  text-transform: uppercase; letter-spacing: 0.4px;
 }
 .field label em { text-transform: none; font-style: normal; color: var(--text-3); font-size: 11px; }
 .required { color: var(--accent); }
 
 .text-input, .text-area {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 11px 14px;
-  color: var(--text);
-  font-size: 14px;
-  outline: none;
-  font-family: inherit;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
+  width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 14px; color: var(--text); font-size: 14px; outline: none;
+  font-family: inherit; transition: border-color 0.2s; box-sizing: border-box;
 }
 .text-input:focus, .text-area:focus { border-color: var(--accent); }
 .text-input::placeholder, .text-area::placeholder { color: var(--text-3); }
 .text-area { resize: vertical; line-height: 1.65; }
 
+/* ── AI 配图 toggle ── */
+.field-toggle-row { margin-bottom: 22px; }
+.toggle-row-label {
+  display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;
+}
+.toggle-pill {
+  flex-shrink: 0; width: 34px; height: 20px; border-radius: 99px;
+  background: rgba(255,255,255,0.08); border: 1px solid var(--border);
+  position: relative; transition: background 0.2s, border-color 0.2s;
+}
+.toggle-pill.on { background: rgba(196,129,58,0.35); border-color: var(--accent); }
+.toggle-dot {
+  position: absolute; top: 3px; left: 3px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-3); transition: transform 0.2s, background 0.2s;
+}
+.toggle-pill.on .toggle-dot { transform: translateX(14px); background: var(--accent); }
+.toggle-text { font-size: 13px; font-weight: 500; color: var(--text-2); }
+.toggle-row-label em { font-style: normal; font-size: 12px; color: var(--text-3); }
+
 .error-msg { font-size: 13px; color: #E07050; margin-bottom: 14px; }
 
 .btn-generate {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 14px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-dk));
-  border: none;
-  border-radius: 12px;
-  color: #FFF8F0;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-  box-shadow: 0 4px 16px rgba(196,129,58,0.3);
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px; background: linear-gradient(135deg, var(--accent), var(--accent-dk));
+  border: none; border-radius: 12px; color: #FFF8F0; font-size: 15px; font-weight: 600;
+  cursor: pointer; transition: opacity 0.2s; box-shadow: 0 4px 16px rgba(196,129,58,0.3);
   font-family: inherit;
 }
 .btn-generate:hover:not(:disabled) { opacity: 0.88; }
 .btn-generate:disabled { opacity: 0.5; cursor: default; }
 
-/* ── Preview phase ── */
+/* ── Preview header ── */
 .preview-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
-  flex-shrink: 0;
+  display: flex; align-items: center; gap: 12px; padding: 10px 24px;
+  border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0;
 }
-
-.btn-back {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: none;
-  color: var(--text-2);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 5px 8px;
-  border-radius: 6px;
-  transition: color 0.15s, background 0.15s;
-  white-space: nowrap;
-  font-family: inherit;
-}
-.btn-back:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-
+.preview-brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.preview-brand-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.ppt-tabs-preview { margin-left: 10px; }
 .doc-title-wrap { flex: 1; min-width: 0; }
 .doc-title { font-size: 16px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-subtitle { font-size: 12px; color: var(--text-2); }
-
 .preview-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-
 .slide-count { font-size: 12px; color: var(--text-3); }
 
+.btn-rewrite {
+  display: flex; align-items: center; gap: 5px; background: transparent;
+  border: 1px solid var(--border); border-radius: 7px; color: var(--text-2);
+  font-size: 12px; padding: 5px 10px; cursor: pointer; transition: all 0.15s; font-family: inherit;
+}
+.btn-rewrite:hover { color: var(--text); border-color: rgba(196,129,58,0.3); }
+
+/* 配图进度 pill */
+.img-gen-pill {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--accent-lt); padding: 4px 10px;
+  border: 1px solid rgba(196,129,58,0.3); border-radius: 99px;
+  background: rgba(196,129,58,0.07);
+}
+
 .btn-export {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  display: flex; align-items: center; gap: 6px; padding: 8px 16px;
   background: linear-gradient(135deg, var(--accent), var(--accent-dk));
-  border: none;
-  border-radius: 8px;
-  color: #FFF8F0;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-  box-shadow: 0 2px 10px rgba(196,129,58,0.3);
+  border: none; border-radius: 8px; color: #FFF8F0; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: opacity 0.2s; box-shadow: 0 2px 10px rgba(196,129,58,0.3);
   font-family: inherit;
 }
 .btn-export:hover:not(:disabled) { opacity: 0.88; }
@@ -699,23 +696,14 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
 
 /* ── Slide strip ── */
 .slide-strip {
-  display: flex;
-  gap: 16px;
-  padding: 24px;
-  overflow-x: auto;
-  flex-shrink: 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(196,129,58,0.2) transparent;
+  display: flex; gap: 16px; padding: 24px;
+  overflow-x: auto; flex-shrink: 0;
+  scrollbar-width: thin; scrollbar-color: rgba(196,129,58,0.2) transparent;
 }
 
 .slide-card {
-  flex-shrink: 0;
-  width: 260px;
-  aspect-ratio: 16 / 9;
-  border-radius: 10px;
-  overflow: hidden;
-  cursor: pointer;
-  position: relative;
+  flex-shrink: 0; width: 260px; aspect-ratio: 16 / 9;
+  border-radius: 10px; overflow: hidden; cursor: pointer; position: relative;
   border: 2px solid rgba(196,129,58,0.1);
   transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
 }
@@ -723,248 +711,155 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
 .slide-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(196,129,58,0.25), 0 8px 24px rgba(0,0,0,0.4); }
 
 .slide-inner {
-  width: 100%;
-  height: 100%;
-  background: #1C1510;
-  padding: 14px 12px;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  width: 100%; height: 100%; background: #1C1510; position: relative;
+  overflow: hidden; display: flex;
 }
 
-/* Cover card */
+/* Cover */
 .cover-inner {
-  background: #120E09;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
+  background: #120E09; align-items: center; justify-content: center; text-align: center;
+  padding: 14px 12px;
 }
 .cover-glow {
-  position: absolute;
-  top: -30px;
-  right: -30px;
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(196,129,58,0.25) 0%, transparent 70%);
+  position: absolute; top: -30px; right: -30px; width: 100px; height: 100px;
+  border-radius: 50%; background: radial-gradient(circle, rgba(196,129,58,0.25) 0%, transparent 70%);
 }
-.cover-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #EAD9C0;
-  line-height: 1.4;
-  position: relative;
-}
-.cover-subtitle {
-  font-size: 10px;
-  color: #8A6B50;
-  margin-top: 6px;
-  position: relative;
-}
+.cover-title { font-size: 13px; font-weight: 700; color: #EAD9C0; line-height: 1.4; position: relative; }
+.cover-subtitle { font-size: 10px; color: #8A6B50; margin-top: 6px; position: relative; }
 
 /* Accent bar */
 .slide-accent-bar {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 3px;
-  height: 100%;
-  background: var(--accent, #C4813A);
+  position: absolute; left: 0; top: 0; width: 3px; height: 100%;
+  background: var(--accent, #C4813A); flex-shrink: 0;
 }
+
+/* Image side panel in card */
+.slide-img-side {
+  width: 88px; flex-shrink: 0; height: 100%; overflow: hidden;
+  position: absolute; right: 0; top: 0;
+}
+.slide-img-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slide-img-spin {
+  width: 100%; height: 100%;
+  background: rgba(196,129,58,0.06);
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Text area in card */
+.slide-text {
+  flex: 1; padding: 10px 10px 10px 14px; display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.slide-text.compact { padding-right: 96px; }
 
 .slide-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: #E8A86A;
-  line-height: 1.3;
-  padding-left: 8px;
-  margin-bottom: 6px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  font-size: 11px; font-weight: 700; color: #E8A86A; line-height: 1.3;
+  margin-bottom: 5px; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-
-.slide-divider {
-  height: 1px;
-  background: var(--accent, #C4813A);
-  opacity: 0.4;
-  margin: 0 8px 6px;
-}
-
-.slide-bullets {
-  list-style: none;
-  padding: 0 0 0 8px;
-  margin: 0;
-  flex: 1;
-  overflow: hidden;
-}
+.slide-divider { height: 1px; background: var(--accent, #C4813A); opacity: 0.4; margin-bottom: 5px; }
+.slide-bullets { list-style: none; padding: 0; margin: 0; flex: 1; overflow: hidden; }
 .slide-bullet {
-  font-size: 9px;
-  color: #C8B89A;
-  line-height: 1.5;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  padding-left: 8px;
-  position: relative;
+  font-size: 9px; color: #C8B89A; line-height: 1.5;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  padding-left: 8px; position: relative;
 }
-.slide-bullet::before {
-  content: '•';
-  position: absolute;
-  left: 0;
-  color: var(--accent, #C4813A);
-}
+.slide-bullet::before { content: '•'; position: absolute; left: 0; color: var(--accent, #C4813A); }
 
-.slide-num {
-  position: absolute;
-  bottom: 5px;
-  right: 8px;
-  font-size: 8px;
-  color: #4A3525;
-}
+.slide-num { position: absolute; bottom: 5px; right: 8px; font-size: 8px; color: #4A3525; }
 
 /* ── Edit panel ── */
 .edit-panel {
-  flex-shrink: 0;
-  background: var(--bg-card);
-  border-top: 1px solid var(--border);
-  padding: 14px 24px;
+  flex-shrink: 0; background: var(--bg-card); border-top: 1px solid var(--border); padding: 14px 24px;
 }
-
 .edit-panel-inner { max-width: 900px; }
-
 .edit-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-2);
-  margin-bottom: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2);
+  margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-.edit-row {
-  display: flex;
-  gap: 10px;
-}
-
+.edit-row { display: flex; gap: 10px; }
 .edit-input {
-  flex: 1;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 12px;
-  color: var(--text);
-  font-size: 13px;
-  outline: none;
-  font-family: inherit;
-  transition: border-color 0.2s;
+  flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 12px; color: var(--text); font-size: 13px; outline: none;
+  font-family: inherit; transition: border-color 0.2s;
 }
 .edit-input:focus { border-color: var(--accent); }
 .edit-input::placeholder { color: var(--text-3); }
 .edit-input:disabled { opacity: 0.5; }
-
 .btn-edit {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 18px;
+  display: flex; align-items: center; gap: 6px; padding: 9px 18px;
   background: linear-gradient(135deg, var(--accent), var(--accent-dk));
-  border: none;
-  border-radius: 8px;
-  color: #FFF8F0;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: opacity 0.2s;
-  font-family: inherit;
+  border: none; border-radius: 8px; color: #FFF8F0; font-size: 13px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; transition: opacity 0.2s; font-family: inherit;
 }
 .btn-edit:hover:not(:disabled) { opacity: 0.88; }
 .btn-edit:disabled { opacity: 0.45; cursor: default; }
 
-.edit-hint {
-  padding: 14px 24px;
-  font-size: 12px;
-  color: var(--text-3);
-  text-align: center;
-  flex-shrink: 0;
+/* Image edit controls */
+.img-edit-row {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
 }
+.img-edit-preview {
+  width: 100px; height: 58px; flex-shrink: 0; border-radius: 6px; overflow: hidden;
+  border: 1px solid var(--border); background: rgba(196,129,58,0.04);
+  display: flex; align-items: center; justify-content: center;
+}
+.img-edit-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img-edit-loading { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 10px; color: var(--text-3); }
+.img-edit-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; color: var(--text-3); }
 
-/* ── AI 配图开关 ── */
-.img-toggle {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text-3);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  user-select: none;
-  white-space: nowrap;
+.img-edit-btns { display: flex; gap: 8px; }
+.btn-reimg {
+  display: flex; align-items: center; gap: 5px; padding: 7px 12px;
+  background: transparent; border: 1px solid rgba(196,129,58,0.35); border-radius: 7px;
+  color: var(--accent-lt); font-size: 12px; cursor: pointer; transition: all 0.15s; font-family: inherit;
 }
-.img-toggle:hover { border-color: rgba(196,129,58,0.3); color: var(--text-2); }
-.img-toggle.active { border-color: rgba(196,129,58,0.5); color: var(--accent-lt); background: rgba(196,129,58,0.08); }
+.btn-reimg:hover:not(:disabled) { background: rgba(196,129,58,0.08); }
+.btn-reimg:disabled { opacity: 0.4; cursor: default; }
+.btn-delimg {
+  padding: 7px 12px; background: transparent; border: 1px solid var(--border);
+  border-radius: 7px; color: var(--text-3); font-size: 12px; cursor: pointer;
+  transition: all 0.15s; font-family: inherit;
+}
+.btn-delimg:hover { border-color: rgba(224,112,80,0.4); color: #E07050; }
+
+.edit-hint { padding: 14px 24px; font-size: 12px; color: var(--text-3); text-align: center; flex-shrink: 0; }
 
 /* ── Cursor badge ── */
 .cursor-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 7px;
-  background: rgba(196,129,58,0.12);
-  border: 1px solid rgba(196,129,58,0.3);
-  border-radius: 99px;
-  color: var(--accent-lt);
-  letter-spacing: 0.3px;
+  font-size: 10px; font-weight: 600; padding: 2px 7px;
+  background: rgba(196,129,58,0.12); border: 1px solid rgba(196,129,58,0.3);
+  border-radius: 99px; color: var(--accent-lt); letter-spacing: 0.3px;
 }
 
 /* ── Spinner ── */
 .spinner {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid rgba(255,248,240,0.3);
-  border-top-color: #FFF8F0;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid rgba(255,248,240,0.3); border-top-color: #FFF8F0;
   animation: spin 0.8s linear infinite;
 }
 .spinner-sm { width: 13px; height: 13px; border-width: 1.5px; }
+.task-mini-spin {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid rgba(196,129,58,0.2); border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Toasts ── */
 .toast-stack {
-  position: fixed;
-  top: 20px;
-  right: 20px;
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  pointer-events: none;
+  position: fixed; top: 20px; right: 20px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
 }
 .toast {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  font-size: 13px;
-  color: var(--text);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  min-width: 180px;
+  display: flex; align-items: center; gap: 9px; padding: 10px 16px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13px; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.5); min-width: 180px;
 }
 .toast.success { border-color: rgba(120,200,130,0.3); }
 .toast.error   { border-color: rgba(224,112,80,0.3); color: #E8A090; }
 .toast.info    { border-color: rgba(196,129,58,0.35); }
-
 .toast-enter-active { transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1); }
 .toast-leave-active { transition: all 0.2s ease; }
 .toast-enter-from   { opacity: 0; transform: translateX(20px) scale(0.94); }
@@ -972,56 +867,20 @@ const slideAccent = (i: number) => SLIDE_ACCENTS[i % SLIDE_ACCENTS.length]
 
 /* ── Reference PPT upload ── */
 .btn-upload-ref {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 14px;
-  background: transparent;
-  border: 1px dashed rgba(196,129,58,0.35);
-  border-radius: 8px;
-  color: var(--text-2);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px;
+  background: transparent; border: 1px dashed rgba(196,129,58,0.35); border-radius: 8px;
+  color: var(--text-2); font-size: 13px; cursor: pointer; transition: all 0.15s; font-family: inherit;
 }
-.btn-upload-ref:hover {
-  color: var(--accent-lt);
-  border-color: rgba(196,129,58,0.6);
-  background: rgba(196,129,58,0.05);
-}
-
+.btn-upload-ref:hover { color: var(--accent-lt); border-color: rgba(196,129,58,0.6); background: rgba(196,129,58,0.05); }
 .ref-file-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: rgba(196,129,58,0.08);
-  border: 1px solid rgba(196,129,58,0.25);
-  border-radius: 8px;
-  color: var(--accent-lt);
-  font-size: 13px;
-  max-width: 100%;
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: rgba(196,129,58,0.08); border: 1px solid rgba(196,129,58,0.25);
+  border-radius: 8px; color: var(--accent-lt); font-size: 13px; max-width: 100%;
 }
-
-.ref-file-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
+.ref-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ref-file-remove {
-  background: none;
-  border: none;
-  color: var(--text-3);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 2px;
-  transition: color 0.15s;
-  flex-shrink: 0;
+  background: none; border: none; color: var(--text-3); cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 0 2px; transition: color 0.15s; flex-shrink: 0;
 }
 .ref-file-remove:hover { color: #E07050; }
 </style>
