@@ -349,7 +349,7 @@ async function extractPptxContent(base64) {
   return { slides, images: images.slice(0, 10) }
 }
 
-const PPT_GEN_SYSTEM = `You are a presentation slide designer. Return ONLY valid JSON (no markdown fences):
+const PPT_GEN_SYSTEM = `You are a creative presentation slide designer. Return ONLY valid JSON (no markdown fences):
 {
   "title": "presentation title",
   "subtitle": "one-line tagline",
@@ -359,20 +359,21 @@ const PPT_GEN_SYSTEM = `You are a presentation slide designer. Return ONLY valid
       "title": "slide title",
       "bullets": ["point 1", "point 2", "point 3"],
       "keywords": "2-3 English keywords",
-      "imagePrompt": "Complete English prompt for gpt-image-2 to render this slide as a full visual"
+      "imagePrompt": "Complete English prompt for gpt-image-2 to generate the entire slide as a single cohesive visual"
     }
   ]
 }
 
-imagePrompt rules (write in English, describe the ENTIRE slide as one image):
-- Start with: "A 16:9 widescreen business presentation slide,"
-- Specify: dark brown/charcoal background, warm amber-orange accent colors
-- Include the slide title text verbatim (even if non-English), displayed prominently at top-left in orange
-- Include each bullet point verbatim as readable text in the slide body
-- Add a relevant illustration, chart, icon or scene on the right 30% that reinforces the slide topic
-- End with: "clean modern typography, professional corporate design"
+imagePrompt rules — the image IS the entire slide, no text will be added later:
+- Open with: "A stunning 16:9 professional presentation slide,"
+- Color: near-black background, rich warm gold/amber/orange, dramatic lighting
+- The slide TITLE must appear clearly in the image — large, stylized, gold or bright orange
+- Each BULLET POINT must appear as readable body text in the image — elegant, well-spaced
+- Layout is FREE: be creative — data visualizations, abstract geometry, photography, icons, or illustrated scenes should be WOVEN INTO the design; text and visuals must form a cohesive magazine-quality composition
+- Each slide should use a distinct layout (full-bleed photo, infographic grid, data chart, icon collage, etc.) — avoid repeating the same left-text / right-image split
+- Close with: "high-fidelity corporate slide design, award-winning aesthetics"
 
-General rules: 6-10 slides, 3-5 concise bullets each (10-25 words), title/bullets in same language as input.`
+General rules: 6-10 slides, 3-5 concise bullets (10-25 words each), title/bullets in same language as input.`
 
 const PPT_EDIT_SYSTEM = `You are editing one slide. Return ONLY the updated slide as valid JSON (no markdown):
 { "title": "...", "bullets": ["..."] }
